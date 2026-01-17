@@ -6,7 +6,7 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА_ЕСЛИ_НУЖНО")
 
 # Твой ключ Groq, который ты скидывал
-GROQ_API_KEY = "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" 
+GROQ_API_KEY = "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" 
 
 # ID админа (замени на свой цифрами, если хочешь получать уведомления)
 ADMIN_ID = 8473513085 
