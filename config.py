@@ -1,8 +1,12 @@
-from dotenv import load_dotenv
 import os
 
-load_dotenv()
+# Вставляем ключи жестко, чтобы точно заработало
+# (В продакшене лучше через переменные окружения, но для старта так надежнее)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТОКЕН_БОТА_ЕСЛИ_НУЖНО")
+
+# Твой ключ Groq, который ты скидывал
+GROQ_API_KEY = "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" 
+
+# ID админа (замени на свой цифрами, если хочешь получать уведомления)
+ADMIN_ID = 8473513085 
