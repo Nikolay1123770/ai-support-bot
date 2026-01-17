@@ -1,132 +1,92 @@
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.client.default import DefaultBotProperties  # <--- ВАЖНЫЙ ИМПОРТ
-from aiogram.enums import ParseMode  # <--- ВАЖНЫЙ ИМПОРТ
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 import asyncio
-import aiofiles
 import os
-from config import BOT_TOKEN, ADMIN_ID
+from config import BOT_TOKEN
 from utils import ask_groq
 
-# --- ИСПРАВЛЕННАЯ СТРОКА ---
+# Настройка бота (v3.x compatible)
 bot = Bot(
     token=BOT_TOKEN, 
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
 )
-# ---------------------------
-
 dp = Dispatcher()
 
-# Загружаем промпт один раз
-async def load_prompt():
-    try:
-        async with aiofiles.open("system_prompt.txt", "r", encoding="utf-8") as f:
-            return (await f.read()).strip()
-    except FileNotFoundError:
-        return "Ты — помощник технической поддержки." # Заглушка, если файла нет
+# Системный промпт
+SYSTEM_PROMPT = """
+Ты — Макс, эксперт техподдержки хостинга BotHost.
+Твоя цель: помочь пользователю запустить его Telegram-бота.
+1. Если прислали ошибку — найди причину и дай решение (код или команду).
+2. Будь краток и вежлив.
+3. Используй Markdown для выделения кода.
+4. Если не знаешь — предложи написать админу.
+"""
 
-# Инициализируем промпт при старте, чтобы не было ошибки вне асинхронности
-SYSTEM_PROMPT = ""
-
-# Кнопки после ответа
-def get_reply_markup():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Решило за минуту!", callback_data="solved")],
-        [InlineKeyboardButton(text="❌ Не помогло", callback_data="not_solved")],
-        [InlineKeyboardButton(text="🔥 Позвать живого Макса", callback_data="call_max")]
+def get_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Спасибо, помогло", callback_data="solved")],
+        [InlineKeyboardButton(text="🆘 Позвать человека", callback_data="call_admin")]
     ])
-    return keyboard
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        "Привет! Я Макс — техподдержка BotHost 24/7 ⚡\n\n"
-        "Кидай лог ошибки, лог сборки, скриншот — я починю твоего бота за 2 минуты.\n\n"
-        "Уже починил 28 347 ботов. Твой следующий 😉",
-        disable_web_page_preview=True
+        "👋 Привет! Я ИИ-техподдержка BotHost.\n"
+        "Скинь мне **лог ошибки**, **скриншот** или файл `main.py`, и я скажу, почему бот не работает."
     )
 
 @dp.message(F.text | F.document | F.photo)
-async def handle_message(message: types.Message):
-    global SYSTEM_PROMPT
-    if not SYSTEM_PROMPT:
-        SYSTEM_PROMPT = await load_prompt()
-
+async def handle_request(message: types.Message):
+    # Показываем, что бот печатает
     await bot.send_chat_action(message.chat.id, "typing")
+    
+    user_text = message.text or message.caption or ""
+    file_content = ""
 
-    user_text = (message.text or message.caption or "").strip()
-    log_content = ""
-
-    # Если файл
+    # Если есть документ — читаем его
     if message.document:
         try:
             file = await bot.get_file(message.document.file_id)
-            file_path = file.file_path
-            # Скачиваем в память
-            io_obj = await bot.download_file(file_path)
-            # Читаем байты и декодируем
-            log_content = io_obj.read().decode("utf-8", errors="ignore")[-30000:]
-        except Exception as e:
-            log_content = f"\n[Ошибка чтения файла: {e}]"
-
-    # Если фото (скрины ошибки)
-    if message.photo:
-        # Для простоты на хостинге лучше не сохранять файлы локально, 
-        # но если очень нужно — оставим как есть, но добавим try/except
-        try:
-            file = await bot.get_file(message.photo[-1].file_id)
-            await bot.download_file(file.file_path, "temp_screenshot.jpg")
-            log_content += "\n\n[Пользователь прислал скриншот ошибки]"
-        except Exception:
+            f_io = await bot.download_file(file.file_path)
+            file_content = f_io.read().decode('utf-8', errors='ignore')[-10000:] # Читаем последние 10к символов
+            user_text += "\n\n[СОДЕРЖИМОЕ ФАЙЛА ЛОГОВ]:\n" + file_content
+        except:
             pass
-
-    full_user_message = user_text + "\n\n" + log_content if log_content else user_text
-
-    if not full_user_message.strip():
-        await message.reply("Бро, пришли хоть что-то: лог, скрин, описание ошибки...")
+            
+    if len(user_text) < 3:
+        await message.answer("Пришли пожалуйста описание проблемы или лог ошибки.")
         return
 
+    # Формируем запрос
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": full_user_message[:32000]}
+        {"role": "user", "content": user_text[:30000]} # Обрезаем, чтобы влезло в контекст
     ]
 
-    reply = await ask_groq(messages)
+    # Получаем ответ (функция сама переберет модели)
+    answer = await ask_groq(messages)
 
-    # Экранирование для Markdown не нужно, если модель отдает чистый текст, 
-    # но лучше переключить отправку на Markdown (или HTML, как настроено в боте)
+    # Отправляем
     try:
-        await message.answer(
-            reply,
-            parse_mode=ParseMode.MARKDOWN, # Модель обычно отвечает в Markdown
-            disable_web_page_preview=True,
-            reply_markup=get_reply_markup()
-        )
+        await message.answer(answer, reply_markup=get_keyboard())
     except:
-        # Если модель накосячила с разметкой, отправляем как простой текст
-        await message.answer(
-            reply,
-            parse_mode=None,
-            reply_markup=get_reply_markup()
-        )
+        # Если Markdown сломался, шлем чистым текстом
+        await message.answer(answer, parse_mode=None, reply_markup=get_keyboard())
 
-@dp.callback_query(F.data == "call_max")
-async def call_max(callback: types.CallbackQuery):
-    if ADMIN_ID:
-        await bot.forward_message(ADMIN_ID, callback.message.chat.id, callback.message.message_id)
-    await callback.message.answer(
-        "⚡ Живой Макс уже летит в чат!\n"
-        "Обычно отвечает в течение 1–3 минут (сейчас онлайн)"
-    )
-    await callback.answer("Вызвал Макса!")
-
-@dp.callback_query(F.data.in_({"solved", "not_solved"}))
-async def feedback(callback: types.CallbackQuery):
-    await callback.answer("Спасибо за обратку ❤️")
+@dp.callback_query()
+async def callbacks(callback: types.CallbackQuery):
+    if callback.data == "solved":
+        await callback.answer("Рад был помочь! 🚀")
+        await callback.message.edit_reply_markup(reply_markup=None)
+    elif callback.data == "call_admin":
+        await callback.answer("Админ уведомлен!")
+        await callback.message.answer("Администратор скоро подключится.")
 
 async def main():
-    print("Макс запущен и готов чинить боты 24/7 ⚡")
+    print("Бот BotHost Support запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
