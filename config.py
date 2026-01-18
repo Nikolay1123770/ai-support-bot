@@ -1,10 +1,8 @@
 import os
 
-# Твой токен бота
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7869311061:AAGPstYpuGk7CZTHBQ-_1IL7FCXDyUfIXPY") 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7869311061:AAGPstYpuGk7CZTHBQ-_1IL7FCXDyUfIXPY")
 
-# Твой ключ Groq
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+# OpenRouter — ОДИН КЛЮЧ = ВСЕ МОДЕЛИ
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "sk-or-v1-94c...c21")  # Твой ключ
 
-# ID Админа
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8473513085"))
+ADMIN_ID = 8473513085
