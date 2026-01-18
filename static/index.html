@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>BotHost AI</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+    * { font-family: 'JetBrains Mono', monospace; }
+    .gradient-bg { background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%); }
+    .glow { box-shadow: 0 0 30px rgba(0, 255, 136, 0.3); }
+    .glow-text { text-shadow: 0 0 10px rgba(0, 255, 136, 0.8); }
+    .code-editor { background: #0d1117; border: 1px solid #30363d; }
+    .btn-primary { background: linear-gradient(90deg, #00ff88, #00cc6a); }
+    .btn-primary:hover { background: linear-gradient(90deg, #00cc6a, #00ff88); }
+    .loading-ring { border: 4px solid #1a1a2e; border-top: 4px solid #00ff88; }
+  </style>
+</head>
+<body class="gradient-bg min-h-screen text-white">
+
+  <!-- Хедер -->
+  <header class="p-4 border-b border-green-500/20">
+    <div class="flex items-center justify-center gap-3">
+      <div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+        <span class="text-2xl">🤖</span>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold glow-text">BotHost AI</h1>
+        <p class="text-xs text-gray-400">Claude • DeepSeek • GPT-4o</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- Контент -->
+  <main class="p-4 pb-32">
+    <!-- Ввод -->
+    <div id="input-view">
+      <div class="mb-4">
+        <label class="block text-sm text-gray-400 mb-2">Вставь код или лог ошибки:</label>
+        <textarea 
+          id="code-input" 
+          class="w-full h-64 code-editor rounded-xl p-4 text-green-400 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-500/50"
+          placeholder="// Вставь сюда main.py, index.js или лог ошибки..."></textarea>
+      </div>
+
+      <button onclick="fixCode()" class="w-full btn-primary py-4 rounded-xl font-bold text-lg text-black glow transition-transform active:scale-95">
+        ⚡ ИСПРАВИТЬ КОД
+      </button>
+
+      <p class="text-center text-xs text-gray-500 mt-4">
+        Нажми → Подожди 5-15 сек → Получи готовый файл
+      </p>
+    </div>
+
+    <!-- Результат -->
+    <div id="result-view" class="hidden">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-green-400">✓</span>
+        <span class="text-sm">Исправлено с помощью <span id="model-name" class="text-green-400">Claude</span></span>
+      </div>
+
+      <div class="code-editor rounded-xl p-4 mb-4 max-h-80 overflow-auto">
+        <pre id="fixed-code" class="text-green-400 text-sm whitespace-pre-wrap"></pre>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <button onclick="copyCode()" class="py-3 bg-gray-800 hover:bg-gray-700 rounded-xl font-medium transition">
+          📋 Копировать
+        </button>
+        <button onclick="downloadFile()" class="py-3 btn-primary rounded-xl font-medium text-black transition">
+          📥 Скачать
+        </button>
+      </div>
+
+      <button onclick="reset()" class="w-full py-3 border border-gray-600 rounded-xl text-gray-400 hover:text-white transition">
+        🔄 Исправить другой код
+      </button>
+    </div>
+
+    <!-- Загрузка -->
+    <div id="loading-view" class="hidden fixed inset-0 gradient-bg flex items-center justify-center z-50">
+      <div class="text-center">
+        <div class="w-16 h-16 loading-ring rounded-full animate-spin mx-auto mb-6"></div>
+        <p class="text-lg glow-text">Нейросети думают...</p>
+        <p class="text-sm text-gray-400 mt-2">Claude, DeepSeek и GPT-4o анализируют код</p>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#0f0f23');
+    tg.setBackgroundColor('#0f0f23');
+
+    let fixedCode = "";
+    let filename = "main.py";
+
+    async function fixCode() {
+      const input = document.getElementById("code-input").value.trim();
+      if (!input) {
+        tg.showAlert("Вставь код или лог ошибки");
+        return;
+      }
+
+      document.getElementById("input-view").classList.add("hidden");
+      document.getElementById("loading-view").classList.remove("hidden");
+
+      try {
+        const res = await fetch("/api/fix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            code: input,
+            user_id: tg.initDataUnsafe?.user?.id || 0
+          })
+        });
+
+        const data = await res.json();
+        
+        fixedCode = data.fixed_code;
+        filename = data.filename;
+        
+        document.getElementById("fixed-code").textContent = fixedCode;
+        document.getElementById("model-name").textContent = data.model;
+        
+        document.getElementById("loading-view").classList.add("hidden");
+        document.getElementById("result-view").classList.remove("hidden");
+
+        tg.HapticFeedback.notificationOccurred("success");
+      } catch (e) {
+        document.getElementById("loading-view").classList.add("hidden");
+        document.getElementById("input-view").classList.remove("hidden");
+        tg.showAlert("Ошибка: " + e.message);
+      }
+    }
+
+    function copyCode() {
+      navigator.clipboard.writeText(fixedCode);
+      tg.HapticFeedback.impactOccurred("light");
+      tg.showAlert("✓ Скопировано!");
+    }
+
+    function downloadFile() {
+      const blob = new Blob([fixedCode], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      tg.HapticFeedback.impactOccurred("medium");
+    }
+
+    function reset() {
+      document.getElementById("result-view").classList.add("hidden");
+      document.getElementById("input-view").classList.remove("hidden");
+      document.getElementById("code-input").value = "";
+      fixedCode = "";
+    }
+  </script>
+</body>
+</html>
