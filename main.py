@@ -1,14 +1,16 @@
-
 # ============================================
-# BOTHOST AI SUPPORT — ПОЛНАЯ ВЕРСИЯ
-# Бот + Mini App в одном файле
+# BOTHOST AI — САМООБУЧАЮЩАЯСЯ СИСТЕМА
+# Личная AI + Groq + База знаний
 # ============================================
 
 import asyncio
 import os
+import json
+import hashlib
 import httpx
 from datetime import datetime
 from contextlib import asynccontextmanager
+from typing import Optional, Tuple, List
 
 # Telegram
 from aiogram import Bot, Dispatcher, types, F
@@ -29,47 +31,336 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+# Database
+import aiosqlite
+
 # ============================================
 # КОНФИГУРАЦИЯ
 # ============================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "sk-or-v1-94c...c21")  # Твой ключ
-ADMIN_ID = int(os.getenv("ADMIN_ID", "136271671"))
-
-# Домен твоего бота на BotHost (замени на свой)
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7869311061:AAGPstYpuGk7CZTHBQ-_1IL7FCXDyUfIXPY")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8473513085"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://bothostsupport.bothost.ru")
-
-# Порт для веб-сервера (BotHost обычно даёт 8080 или 3000)
 PORT = int(os.getenv("PORT", "8080"))
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+
+# Путь к базе данных
+DB_PATH = "knowledge_base.db"
 
 # ============================================
-# МОДЕЛИ ИИ (OpenRouter)
+# БЕСПЛАТНЫЕ AI МОДЕЛИ
 # ============================================
 
-MODELS = [
-    "anthropic/claude-sonnet-4",
-    "deepseek/deepseek-r1",
-    "google/gemini-2.5-pro-preview",
-    "anthropic/claude-3.5-sonnet",
-    "openai/gpt-4o",
-    "meta-llama/llama-3.3-70b-instruct",
+FREE_MODELS = [
+    {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B ⚡"},
+    {"id": "llama-3.1-70b-versatile", "name": "Llama 3.1 70B 🦙"},
+    {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B 🎯"},
+    {"id": "gemma2-9b-it", "name": "Gemma 2 9B 💎"},
 ]
 
-# Хранилище
+# Хранилище в памяти
 user_context = {}
 last_fixed = {}
-user_stats = {}
+pending_ratings = {}  # Ожидающие оценки
+stats = {"requests": 0, "users": set(), "from_cache": 0, "from_ai": 0}
 
 # ============================================
-# AI ENGINE
+# БАЗА ДАННЫХ — МОЗГ ОБУЧЕНИЯ
 # ============================================
 
-async def ask_ai(messages: list, user_id: int) -> tuple[str, str]:
+async def init_database():
+    """Создаём таблицы для обучения"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Таблица решений (база знаний)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS solutions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                error_hash TEXT UNIQUE,
+                error_text TEXT,
+                error_type TEXT,
+                solution TEXT,
+                code_snippet TEXT,
+                success_count INTEGER DEFAULT 1,
+                fail_count INTEGER DEFAULT 0,
+                confidence REAL DEFAULT 0.5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Таблица оценок
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                error_hash TEXT,
+                rating TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Таблица паттернов ошибок
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS error_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT UNIQUE,
+                error_type TEXT,
+                quick_fix TEXT,
+                count INTEGER DEFAULT 1
+            )
+        """)
+        
+        # Таблица истории пользователей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                query TEXT,
+                response TEXT,
+                source TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        await db.commit()
+        print("✅ База данных инициализирована")
+
+
+def get_error_hash(text: str) -> str:
+    """Создаём уникальный хеш для ошибки"""
+    # Убираем переменные части (пути, числа)
+    import re
+    normalized = re.sub(r'/[\w/]+/', '/PATH/', text)
+    normalized = re.sub(r'line \d+', 'line N', normalized)
+    normalized = re.sub(r':\d+:', ':N:', normalized)
+    normalized = normalized.lower().strip()
+    return hashlib.md5(normalized.encode()).hexdigest()[:16]
+
+
+def extract_error_type(text: str) -> str:
+    """Определяем тип ошибки"""
+    import re
+    
+    patterns = {
+        "ModuleNotFoundError": r"ModuleNotFoundError|No module named",
+        "ImportError": r"ImportError|cannot import",
+        "SyntaxError": r"SyntaxError|invalid syntax",
+        "TypeError": r"TypeError",
+        "AttributeError": r"AttributeError|has no attribute",
+        "KeyError": r"KeyError",
+        "ValueError": r"ValueError",
+        "ConnectionError": r"ConnectionError|Connection refused|timeout",
+        "AuthError": r"401|403|Unauthorized|Forbidden|Invalid token",
+        "FileError": r"FileNotFoundError|PermissionError|No such file",
+    }
+    
+    for error_type, pattern in patterns.items():
+        if re.search(pattern, text, re.IGNORECASE):
+            return error_type
+    
+    return "UnknownError"
+
+
+# ============================================
+# ЛИЧНАЯ AI — ПОИСК В БАЗЕ ЗНАНИЙ
+# ============================================
+
+async def search_knowledge_base(error_text: str) -> Optional[dict]:
+    """Ищем похожее решение в базе знаний"""
+    error_hash = get_error_hash(error_text)
+    error_type = extract_error_type(error_text)
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        # Сначала ищем по точному хешу
+        cursor = await db.execute(
+            "SELECT * FROM solutions WHERE error_hash = ? AND confidence > 0.6",
+            (error_hash,)
+        )
+        exact_match = await cursor.fetchone()
+        
+        if exact_match:
+            print(f"🎯 Точное совпадение: {error_hash}")
+            return dict(exact_match)
+        
+        # Ищем по типу ошибки с высокой уверенностью
+        cursor = await db.execute("""
+            SELECT * FROM solutions 
+            WHERE error_type = ? AND confidence > 0.7
+            ORDER BY confidence DESC, success_count DESC
+            LIMIT 1
+        """, (error_type,))
+        type_match = await cursor.fetchone()
+        
+        if type_match:
+            print(f"📂 Совпадение по типу: {error_type}")
+            return dict(type_match)
+    
+    return None
+
+
+async def save_to_knowledge_base(error_text: str, solution: str, code_snippet: str = ""):
+    """Сохраняем новое решение в базу"""
+    error_hash = get_error_hash(error_text)
+    error_type = extract_error_type(error_text)
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Пробуем обновить существующее или создать новое
+        await db.execute("""
+            INSERT INTO solutions (error_hash, error_text, error_type, solution, code_snippet)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(error_hash) DO UPDATE SET
+                solution = excluded.solution,
+                updated_at = CURRENT_TIMESTAMP
+        """, (error_hash, error_text[:1000], error_type, solution, code_snippet))
+        
+        await db.commit()
+        print(f"💾 Сохранено в базу: {error_hash}")
+
+
+async def update_confidence(error_hash: str, is_positive: bool):
+    """Обновляем уверенность на основе оценки"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        if is_positive:
+            await db.execute("""
+                UPDATE solutions SET 
+                    success_count = success_count + 1,
+                    confidence = MIN(1.0, confidence + 0.1),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE error_hash = ?
+            """, (error_hash,))
+        else:
+            await db.execute("""
+                UPDATE solutions SET 
+                    fail_count = fail_count + 1,
+                    confidence = MAX(0.0, confidence - 0.15),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE error_hash = ?
+            """, (error_hash,))
+        
+        await db.commit()
+
+
+async def save_rating(user_id: int, error_hash: str, rating: str):
+    """Сохраняем оценку пользователя"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO ratings (user_id, error_hash, rating) VALUES (?, ?, ?)",
+            (user_id, error_hash, rating)
+        )
+        await db.commit()
+
+
+async def save_user_history(user_id: int, query: str, response: str, source: str):
+    """Сохраняем историю запросов"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO user_history (user_id, query, response, source) VALUES (?, ?, ?, ?)",
+            (user_id, query[:500], response[:2000], source)
+        )
+        await db.commit()
+
+
+async def get_knowledge_stats() -> dict:
+    """Получаем статистику базы знаний"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM solutions")
+        total_solutions = (await cursor.fetchone())[0]
+        
+        cursor = await db.execute("SELECT COUNT(*) FROM solutions WHERE confidence > 0.7")
+        reliable_solutions = (await cursor.fetchone())[0]
+        
+        cursor = await db.execute("SELECT COUNT(*) FROM ratings WHERE rating = 'good'")
+        positive_ratings = (await cursor.fetchone())[0]
+        
+        cursor = await db.execute("SELECT COUNT(*) FROM ratings WHERE rating = 'bad'")
+        negative_ratings = (await cursor.fetchone())[0]
+        
+        cursor = await db.execute("SELECT COUNT(*) FROM user_history")
+        total_queries = (await cursor.fetchone())[0]
+        
+        return {
+            "total_solutions": total_solutions,
+            "reliable_solutions": reliable_solutions,
+            "positive_ratings": positive_ratings,
+            "negative_ratings": negative_ratings,
+            "total_queries": total_queries
+        }
+
+
+# ============================================
+# СИСТЕМНЫЙ ПРОМПТ
+# ============================================
+
+SYSTEM_PROMPT = """Ты — Макс, опытный DevOps-инженер с 15 годами опыта.
+Ты специалист по анализу логов Telegram-ботов на Python, Node.js, Go.
+
+ФОРМАТ ОТВЕТА:
+
+📍 **Где ошибка:**
+`[точная строка или файл]`
+
+❌ **Что произошло:**
+[Простое объяснение]
+
+💡 **Почему:**
+[Причина ошибки]
+
+🛠 **Решение:**
+
+**Вариант 1:**
+```python
+# код исправления
+```
+
+**Вариант 2:**
+[альтернатива если есть]
+
+⚡ **Команда:**
+```bash
+pip install something
+```
+
+📝 **Совет:**
+[Как избежать в будущем]"""
+
+# ============================================
+# УМНЫЙ AI ENGINE
+# ============================================
+
+async def ask_ai(messages: list, user_id: int) -> Tuple[str, str, str]:
+    """
+    Умный запрос: сначала база знаний, потом Groq
+    Возвращает: (ответ, модель, источник)
+    """
+    user_query = messages[1]["content"]
+    
+    # ШАГ 1: Ищем в своей базе знаний
+    cached = await search_knowledge_base(user_query)
+    
+    if cached and cached["confidence"] > 0.7:
+        stats["from_cache"] += 1
+        answer = cached["solution"]
+        
+        # Добавляем метку что из кэша
+        answer += f"\n\n_💾 Ответ из базы знаний (уверенность: {int(cached['confidence']*100)}%)_"
+        
+        # Сохраняем для оценки
+        error_hash = get_error_hash(user_query)
+        pending_ratings[user_id] = error_hash
+        
+        await save_user_history(user_id, user_query, answer, "cache")
+        
+        return answer, "🧠 Личная AI", "cache"
+    
+    # ШАГ 2: Спрашиваем Groq
+    stats["from_ai"] += 1
+    
     if user_id not in user_context:
         user_context[user_id] = []
-
-    history = user_context[user_id][-8:]
+    
+    history = user_context[user_id][-6:]
     full_messages = [
         {"role": "system", "content": messages[0]["content"]}
     ] + history + [
@@ -77,321 +368,73 @@ async def ask_ai(messages: list, user_id: int) -> tuple[str, str]:
     ]
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": WEBAPP_URL,
-        "X-Title": "BotHost AI"
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for model in MODELS:
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        for model in FREE_MODELS:
             try:
                 response = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
+                    "https://api.groq.com/openai/v1/chat/completions",
                     headers=headers,
                     json={
-                        "model": model,
+                        "model": model["id"],
                         "messages": full_messages,
                         "temperature": 0.3,
-                        "max_tokens": 8192
+                        "max_tokens": 4000
                     }
                 )
 
                 if response.status_code == 200:
-                    answer = response.json()["choices"][0]["message"]["content"]
+                    data = response.json()
+                    answer = data["choices"][0]["message"]["content"]
                     
-                    user_context[user_id].append({"role": "user", "content": messages[1]["content"][:1500]})
-                    user_context[user_id].append({"role": "assistant", "content": answer[:1500]})
+                    # Сохраняем контекст
+                    user_context[user_id].append({
+                        "role": "user", 
+                        "content": messages[1]["content"][:1500]
+                    })
+                    user_context[user_id].append({
+                        "role": "assistant", 
+                        "content": answer[:1500]
+                    })
                     
-                    return answer, model.split("/")[-1]
-
-                elif response.status_code in [429, 503, 529]:
+                    # ОБУЧЕНИЕ: Сохраняем в базу знаний
+                    code_snippet = ""
+                    if "```" in answer:
+                        try:
+                            code_snippet = answer.split("```")[1]
+                        except:
+                            pass
+                    
+                    await save_to_knowledge_base(user_query, answer, code_snippet)
+                    
+                    # Сохраняем для оценки
+                    error_hash = get_error_hash(user_query)
+                    pending_ratings[user_id] = error_hash
+                    
+                    await save_user_history(user_id, user_query, answer, "groq")
+                    
+                    stats["requests"] += 1
+                    stats["users"].add(user_id)
+                    
+                    return answer, model["name"], "groq"
+                
+                elif response.status_code == 429:
+                    await asyncio.sleep(2)
                     continue
                     
             except Exception as e:
-                print(f"[{model}] Error: {e}")
+                print(f"❌ Error: {e}")
                 continue
 
-    return "⚠️ Серверы ИИ перегружены. Попробуй через минуту.", "none"
+    return "❌ AI недоступен. Попробуй позже.", "Ошибка", "error"
 
 
 def clear_context(user_id: int):
-    user_context.pop(user_id, None)
-
-
-# ============================================
-# СИСТЕМНЫЙ ПРОМПТ
-# ============================================
-
-SYSTEM_PROMPT = """Ты — Макс, легендарный Full-Stack инженер BotHost с 15 годами опыта.
-Ты эксперт по Telegram-ботам: Python (aiogram, telebot, pyrogram), Node.js, Go, Bun.
-
-ТВОЯ МИССИЯ: Получить код с ошибкой → Вернуть 100% рабочий исправленный код.
-
-ФОРМАТ ОТВЕТА:
-
-🔍 **Диагноз:**
-(Что сломано, 1-3 пункта)
-
-🛠 **Лечение:**
-(Что именно исправил)
-
-💻 **Готовый код:**
-```python
-# ПОЛНЫЙ ИСПРАВЛЕННЫЙ ФАЙЛ
-# Скопируй и замени свой файл
-```
-
-⚡ **Советы:**
-(Дополнительные рекомендации)
-
-ПРАВИЛА:
-1. Код ВСЕГДА в блоке ``` с указанием языка
-2. Возвращай ВЕСЬ файл целиком
-3. Никаких "возможно", "попробуй" — только 100% решения
-4. Обновляй устаревший код до стандартов 2025
-5. Добавляй комментарии к исправлениям"""
-
-# ============================================
-# TELEGRAM BOT
-# ============================================
-
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
-dp = Dispatcher()
-
-
-def get_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📥 Скачать", callback_data="download"),
-            InlineKeyboardButton(text="📋 Копировать", callback_data="copy")
-        ],
-        [
-            InlineKeyboardButton(text="🔄 Новый код", callback_data="new"),
-            InlineKeyboardButton(text="🧹 Очистить", callback_data="clear")
-        ],
-        [
-            InlineKeyboardButton(text="⭐ Огонь!", callback_data="rate"),
-            InlineKeyboardButton(text="👨‍💻 Человек", callback_data="human")
-        ]
-    ])
-
-
-def get_start_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="🚀 Открыть BotHost AI",
-            web_app=WebAppInfo(url=WEBAPP_URL)
-        )],
-        [InlineKeyboardButton(text="📖 Как пользоваться", callback_data="help")]
-    ])
-
-
-@dp.message(Command("start"))
-async def cmd_start(m: types.Message):
-    # Устанавливаем кнопку меню с Mini App
-    try:
-        await bot.set_chat_menu_button(
-            chat_id=m.chat.id,
-            menu_button=MenuButtonWebApp(
-                text="🤖 BotHost AI",
-                web_app=WebAppInfo(url=WEBAPP_URL)
-            )
-        )
-    except:
-        pass
-
-    await m.answer(
-        "🚀 **BotHost AI — Ultimate Edition**\n\n"
-        "Я подключён ко всем лучшим нейросетям:\n"
-        "• Claude Sonnet 4\n"
-        "• DeepSeek R1\n"
-        "• GPT-4o\n"
-        "• Gemini 2.5 Pro\n"
-        "• Llama 3.3\n\n"
-        "📤 **Отправь мне:**\n"
-        "→ Файл `main.py` или `index.js`\n"
-        "→ Лог ошибки\n"
-        "→ Описание проблемы\n\n"
-        "📥 **Получишь:**\n"
-        "→ Готовый исправленный файл\n"
-        "→ Объяснение что было не так\n\n"
-        "💡 Или открой **Mini App** — там ещё удобнее!",
-        reply_markup=get_start_keyboard()
-    )
-
-
-@dp.message(Command("stats"))
-async def cmd_stats(m: types.Message):
-    if m.from_user.id != ADMIN_ID:
-        return
-    
-    total_users = len(user_stats)
-    total_requests = sum(user_stats.values())
-    
-    await m.answer(
-        f"📊 **BotHost AI Stats**\n\n"
-        f"👥 Пользователей: `{total_users}`\n"
-        f"💬 Запросов: `{total_requests}`\n"
-        f"🧠 Активных контекстов: `{len(user_context)}`"
-    )
-
-
-@dp.message(Command("webapp"))
-async def cmd_webapp(m: types.Message):
-    await m.answer(
-        "🚀 **Открой BotHost AI Mini App**\n\n"
-        "Там можно:\n"
-        "• Вставлять код прямо в редактор\n"
-        "• Скачивать исправленные файлы\n"
-        "• Работать быстрее и удобнее",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🤖 Открыть Mini App",
-                web_app=WebAppInfo(url=WEBAPP_URL)
-            )]
-        ])
-    )
-
-
-@dp.message(F.text | F.document | F.photo)
-async def handle_message(m: types.Message):
-    if m.text and m.text.startswith("/"):
-        return
-
-    # Статистика
-    user_stats[m.from_user.id] = user_stats.get(m.from_user.id, 0) + 1
-
-    # Думаем
-    thinking = await m.answer("🧠 *Анализирую код...*\n⏳ Это займёт 5-20 секунд")
-    await bot.send_chat_action(m.chat.id, "typing")
-
-    text = m.text or m.caption or ""
-    filename = "main.py"
-
-    # Читаем файл
-    if m.document:
-        try:
-            file = await bot.get_file(m.document.file_id)
-            content = (await bot.download_file(file.file_path)).read().decode('utf-8', errors='ignore')
-            filename = m.document.file_name or "code.py"
-            text += f"\n\n📎 **Файл: {filename}**\n```\n{content[-30000:]}\n```"
-        except Exception as e:
-            text += f"\n[Ошибка чтения: {e}]"
-
-    if len(text.strip()) < 5:
-        await thinking.delete()
-        await m.answer("❌ Пришли код, лог или файл")
-        return
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": text}
-    ]
-
-    # Запрос к ИИ
-    answer, model_used = await ask_ai(messages, m.from_user.id)
-
-    # Извлекаем код
-    if "```" in answer:
-        try:
-            parts = answer.split("```")
-            code_block = parts[1]
-            lang = code_block.split("\n")[0].strip().lower()
-            code = "\n".join(code_block.split("\n")[1:])
-            
-            if "python" in lang or "py" in lang:
-                filename = filename if filename.endswith(".py") else "main.py"
-            elif "javascript" in lang or "js" in lang:
-                filename = "index.js"
-            elif "go" in lang:
-                filename = "main.go"
-            elif "typescript" in lang or "ts" in lang:
-                filename = "index.ts"
-            
-            last_fixed[m.from_user.id] = (code.strip(), filename, model_used)
-        except:
-            pass
-
-    await thinking.delete()
-
-    footer = f"\n\n_⚡ Модель: {model_used}_"
-
-    try:
-        await m.answer(answer + footer, reply_markup=get_keyboard())
-    except:
-        await m.answer(answer[:4000] + footer, parse_mode=None, reply_markup=get_keyboard())
-
-
-@dp.callback_query(F.data == "download")
-async def cb_download(cb: types.CallbackQuery):
-    if cb.from_user.id not in last_fixed:
-        await cb.answer("Сначала пришли код!")
-        return
-
-    code, filename, model = last_fixed[cb.from_user.id]
-    
-    file = BufferedInputFile(file=code.encode('utf-8'), filename=filename)
-
-    await bot.send_document(
-        cb.message.chat.id,
-        file,
-        caption=f"✅ **Файл:** `{filename}`\n_Исправлено: {model}_"
-    )
-    await cb.answer("📥 Отправлено!")
-
-
-@dp.callback_query(F.data == "copy")
-async def cb_copy(cb: types.CallbackQuery):
-    if cb.from_user.id not in last_fixed:
-        await cb.answer("Нет кода")
-        return
-    
-    code, _, _ = last_fixed[cb.from_user.id]
-    await cb.message.answer(f"```\n{code[:4000]}\n```", parse_mode="Markdown")
-    await cb.answer("Нажми на блок кода для копирования")
-
-
-@dp.callback_query(F.data == "new")
-async def cb_new(cb: types.CallbackQuery):
-    await cb.answer("Жду новый код!")
-    await cb.message.answer("📤 Отправь файл или ошибку")
-
-
-@dp.callback_query(F.data == "clear")
-async def cb_clear(cb: types.CallbackQuery):
-    clear_context(cb.from_user.id)
-    await cb.answer("🧹 Память очищена!")
-
-
-@dp.callback_query(F.data == "rate")
-async def cb_rate(cb: types.CallbackQuery):
-    await cb.answer("Спасибо! ⭐⭐⭐⭐⭐")
-
-
-@dp.callback_query(F.data == "help")
-async def cb_help(cb: types.CallbackQuery):
-    await cb.message.answer(
-        "📖 **Как пользоваться BotHost AI:**\n\n"
-        "1️⃣ Скопируй свой код с ошибкой\n"
-        "2️⃣ Отправь его мне (или файл .py/.js)\n"
-        "3️⃣ Подожди 5-20 секунд\n"
-        "4️⃣ Получи готовый исправленный код\n"
-        "5️⃣ Нажми «Скачать» — замени файл\n\n"
-        "💡 Я помню контекст разговора, так что можешь уточнять!"
-    )
-    await cb.answer()
-
-
-@dp.callback_query(F.data == "human")
-async def cb_human(cb: types.CallbackQuery):
-    try:
-        await bot.forward_message(ADMIN_ID, cb.message.chat.id, cb.message.message_id)
-        await bot.send_message(ADMIN_ID, f"🆘 От: @{cb.from_user.username} | ID: `{cb.from_user.id}`")
-    except:
-        pass
-    await cb.answer("Инженер уведомлён!")
-    await cb.message.answer("👨‍💻 Живой человек скоро подключится")
+    if user_id in user_context:
+        user_context[user_id] = []
 
 
 # ============================================
@@ -404,111 +447,96 @@ MINI_APP_HTML = """
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BotHost AI</title>
+  <title>BotHost AI — Умный анализатор</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
-    * { font-family: 'JetBrains Mono', monospace; -webkit-tap-highlight-color: transparent; }
-    body { background: linear-gradient(180deg, #0a0a0f 0%, #111118 100%); }
-    .glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.05); }
-    .glow { box-shadow: 0 0 40px rgba(0,255,136,0.15); }
-    .glow-text { text-shadow: 0 0 20px rgba(0,255,136,0.5); }
-    .code-area { background: #0d1117; border: 1px solid #21262d; caret-color: #00ff88; }
-    .code-area:focus { border-color: #00ff88; outline: none; box-shadow: 0 0 0 3px rgba(0,255,136,0.1); }
-    .btn-glow { background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); box-shadow: 0 4px 20px rgba(0,255,136,0.3); }
-    .btn-glow:active { transform: scale(0.98); }
-    .spinner { border: 3px solid #1a1a2e; border-top-color: #00ff88; }
-    .fade-in { animation: fadeIn 0.3s ease; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    * { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { background: linear-gradient(180deg, #0a0a0f 0%, #111118 100%); min-height: 100vh; }
+    .glow { box-shadow: 0 0 30px rgba(0,255,136,0.2); }
+    .code-area { background: #0d1117; border: 2px solid #21262d; }
+    .code-area:focus { border-color: #00ff88; outline: none; }
+    .btn-main { background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); }
+    .result-box { background: #0d1117; border: 1px solid #21262d; }
+    .brain-pulse { animation: pulse 2s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-    .pulse { animation: pulse 2s infinite; }
   </style>
 </head>
-<body class="min-h-screen text-white overflow-x-hidden">
+<body class="text-white p-4">
 
-  <!-- Header -->
-  <header class="glass sticky top-0 z-50 px-4 py-3 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 flex items-center justify-center">
-        <span class="text-xl">⚡</span>
-      </div>
-      <div>
-        <h1 class="text-lg font-bold glow-text">BotHost AI</h1>
-        <p class="text-[10px] text-gray-500">Claude • DeepSeek • GPT-4o</p>
-      </div>
-    </div>
-    <div id="status" class="flex items-center gap-2">
-      <div class="w-2 h-2 rounded-full bg-green-500 pulse"></div>
-      <span class="text-xs text-gray-400">Online</span>
+  <header class="text-center mb-6 pt-2">
+    <div class="text-3xl mb-2 brain-pulse">🧠</div>
+    <h1 class="text-2xl font-bold" style="color: #00ff88;">BotHost AI</h1>
+    <p class="text-gray-500 text-sm mt-1">Самообучающийся анализатор</p>
+    <div id="stats-badge" class="text-xs text-gray-600 mt-2">
+      💾 База знаний загружается...
     </div>
   </header>
 
-  <!-- Main Content -->
-  <main class="p-4 pb-8">
-    
-    <!-- Input View -->
-    <div id="input-view" class="fade-in">
-      <div class="mb-3">
-        <label class="block text-xs text-gray-500 mb-2 uppercase tracking-wider">Вставь код или лог ошибки</label>
-        <textarea 
-          id="code-input" 
-          class="w-full h-72 code-area rounded-2xl p-4 text-green-400 text-sm resize-none transition-all"
-          placeholder="// main.py, index.js или лог ошибки...
-// Просто вставь сюда и нажми кнопку ниже"></textarea>
-      </div>
+  <main>
+    <div id="input-view">
+      <label class="text-xs text-gray-500 mb-2 block">Вставь лог ошибки:</label>
+      <textarea 
+        id="code-input" 
+        class="w-full h-56 code-area rounded-2xl p-4 text-red-400 text-xs resize-none mb-4 font-mono"
+        placeholder="Вставь лог ошибки..."></textarea>
 
-      <div class="glass rounded-2xl p-3 mb-4 flex items-center gap-3">
-        <span class="text-2xl">💡</span>
-        <p class="text-xs text-gray-400">Я использую Claude, DeepSeek и GPT-4o одновременно, чтобы дать лучший ответ</p>
-      </div>
-
-      <button 
-        id="fix-btn"
-        onclick="fixCode()" 
-        class="w-full btn-glow py-4 rounded-2xl font-bold text-lg text-black transition-all">
-        ⚡ ИСПРАВИТЬ КОД
+      <button onclick="analyzeLog()" class="w-full btn-main py-4 rounded-2xl font-bold text-lg text-black glow">
+        🧠 АНАЛИЗИРОВАТЬ
       </button>
-    </div>
-
-    <!-- Loading View -->
-    <div id="loading-view" class="hidden fade-in">
-      <div class="flex flex-col items-center justify-center py-20">
-        <div class="w-16 h-16 spinner rounded-full animate-spin mb-6"></div>
-        <p class="text-lg font-semibold glow-text mb-2">Анализирую код...</p>
-        <p class="text-sm text-gray-500">Claude, DeepSeek и GPT-4o думают</p>
-        <p id="timer" class="text-xs text-gray-600 mt-4">0 сек</p>
+      
+      <div class="mt-4 p-3 rounded-xl bg-gray-900/50 border border-gray-800">
+        <p class="text-xs text-gray-400">
+          🧠 AI учится на каждом запросе. Чем больше оценок — тем умнее!
+        </p>
       </div>
     </div>
 
-    <!-- Result View -->
-    <div id="result-view" class="hidden fade-in">
-      <div class="glass rounded-2xl p-3 mb-4 flex items-center justify-between">
+    <div id="loading-view" class="hidden text-center py-16">
+      <div class="w-14 h-14 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+      <p class="text-lg font-medium" style="color: #00ff88;">Думаю...</p>
+      <p class="text-gray-500 text-sm mt-2" id="thinking-status">Проверяю базу знаний...</p>
+    </div>
+
+    <div id="result-view" class="hidden">
+      <div class="flex items-center justify-between mb-3">
         <div class="flex items-center gap-2">
-          <span class="text-green-500">✓</span>
-          <span class="text-sm text-gray-300">Исправлено</span>
+          <span class="text-green-500 text-lg">✅</span>
+          <span class="text-sm text-gray-300">Готово</span>
         </div>
-        <span id="model-badge" class="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-400">Claude</span>
+        <div class="flex items-center gap-2">
+          <span id="source-badge" class="text-xs px-2 py-1 rounded-full bg-purple-500/10 text-purple-400">🧠</span>
+          <span id="model-badge" class="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-400">AI</span>
+        </div>
       </div>
 
-      <div class="code-area rounded-2xl p-4 mb-4 max-h-72 overflow-auto">
-        <pre id="fixed-code" class="text-green-400 text-xs leading-relaxed whitespace-pre-wrap"></pre>
+      <div class="result-box rounded-2xl p-4 mb-4 max-h-80 overflow-auto">
+        <pre id="analysis-result" class="text-sm leading-relaxed whitespace-pre-wrap font-sans"></pre>
       </div>
 
-      <div class="grid grid-cols-2 gap-3 mb-4">
-        <button onclick="copyCode()" class="glass py-3.5 rounded-xl font-medium text-sm transition-all hover:bg-white/5 active:scale-98">
+      <!-- Оценка -->
+      <div class="flex gap-3 mb-4">
+        <button onclick="rateAnswer('good')" class="flex-1 py-3 bg-green-900/30 hover:bg-green-900/50 rounded-xl border border-green-500/30 text-green-400 font-medium">
+          👍 Помогло
+        </button>
+        <button onclick="rateAnswer('bad')" class="flex-1 py-3 bg-red-900/30 hover:bg-red-900/50 rounded-xl border border-red-500/30 text-red-400 font-medium">
+          👎 Не помогло
+        </button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <button onclick="copyAnalysis()" class="py-3 bg-gray-800 rounded-xl font-medium">
           📋 Копировать
         </button>
-        <button onclick="downloadFile()" class="btn-glow py-3.5 rounded-xl font-medium text-sm text-black">
-          📥 Скачать
+        <button onclick="copyCodeOnly()" class="py-3 btn-main rounded-xl text-black font-medium">
+          💻 Только код
         </button>
       </div>
 
-      <button onclick="reset()" class="w-full glass py-3 rounded-xl text-sm text-gray-400 hover:text-white transition-all">
-        🔄 Исправить другой код
+      <button onclick="reset()" class="w-full py-3 border border-gray-700 rounded-xl text-gray-400">
+        🔄 Новый анализ
       </button>
     </div>
-
   </main>
 
   <script>
@@ -516,106 +544,101 @@ MINI_APP_HTML = """
     tg.ready();
     tg.expand();
     
-    // Тема
-    const bg = tg.themeParams.bg_color || '#0a0a0f';
-    document.body.style.background = `linear-gradient(180deg, ${bg} 0%, #111118 100%)`;
-    tg.setHeaderColor('#0a0a0f');
-    tg.setBackgroundColor('#0a0a0f');
+    let analysisResult = "";
+    let codeOnly = "";
+    let currentSource = "";
 
-    let fixedCode = "";
-    let filename = "main.py";
-    let timer = null;
-    let seconds = 0;
+    // Загружаем статистику
+    fetch("/api/stats").then(r => r.json()).then(data => {
+      document.getElementById("stats-badge").textContent = 
+        `💾 ${data.total_solutions} решений | ✅ ${data.positive_ratings} оценок`;
+    });
 
-    function startTimer() {
-      seconds = 0;
-      timer = setInterval(() => {
-        seconds++;
-        document.getElementById("timer").textContent = seconds + " сек";
-      }, 1000);
-    }
-
-    function stopTimer() {
-      if (timer) clearInterval(timer);
-    }
-
-    async function fixCode() {
+    async function analyzeLog() {
       const input = document.getElementById("code-input").value.trim();
-      if (!input) {
-        tg.showAlert("Вставь код или лог ошибки");
+      if (!input || input.length < 20) {
+        tg.showAlert("Вставь лог ошибки!");
         return;
       }
 
-      // UI
       document.getElementById("input-view").classList.add("hidden");
       document.getElementById("loading-view").classList.remove("hidden");
-      startTimer();
-      tg.HapticFeedback.impactOccurred("light");
-
+      
       try {
-        const res = await fetch("/api/fix", {
+        const response = await fetch("/api/fix", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
             code: input,
-            user_id: tg.initDataUnsafe?.user?.id || 0,
-            username: tg.initDataUnsafe?.user?.username || "unknown"
+            user_id: tg.initDataUnsafe?.user?.id || 0
           })
         });
 
-        const data = await res.json();
-        
-        if (data.error) {
-          throw new Error(data.error);
-        }
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
 
-        fixedCode = data.fixed_code;
-        filename = data.filename || "main.py";
+        analysisResult = data.fixed_code || "";
+        codeOnly = data.code_only || "";
+        currentSource = data.source || "ai";
         
-        document.getElementById("fixed-code").textContent = fixedCode;
+        document.getElementById("analysis-result").innerHTML = formatAnalysis(analysisResult);
         document.getElementById("model-badge").textContent = data.model || "AI";
+        document.getElementById("source-badge").textContent = 
+          data.source === "cache" ? "💾 Из базы" : "🌐 Groq";
         
-        stopTimer();
         document.getElementById("loading-view").classList.add("hidden");
         document.getElementById("result-view").classList.remove("hidden");
 
         tg.HapticFeedback.notificationOccurred("success");
 
-      } catch (e) {
-        stopTimer();
+      } catch (error) {
         document.getElementById("loading-view").classList.add("hidden");
         document.getElementById("input-view").classList.remove("hidden");
-        tg.showAlert("Ошибка: " + (e.message || "Попробуй ещё раз"));
-        tg.HapticFeedback.notificationOccurred("error");
+        tg.showAlert("Ошибка: " + error.message);
       }
     }
 
-    function copyCode() {
-      navigator.clipboard.writeText(fixedCode).then(() => {
-        tg.HapticFeedback.impactOccurred("light");
-        tg.showAlert("✓ Скопировано в буфер!");
+    async function rateAnswer(rating) {
+      await fetch("/api/rate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          user_id: tg.initDataUnsafe?.user?.id || 0,
+          rating: rating
+        })
       });
+      
+      tg.showAlert(rating === "good" ? "✅ Спасибо! AI стал умнее!" : "📝 Учтём на будущее!");
+      tg.HapticFeedback.impactOccurred("light");
     }
 
-    function downloadFile() {
-      const blob = new Blob([fixedCode], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      tg.HapticFeedback.impactOccurred("medium");
+    function formatAnalysis(text) {
+      return text
+        .replace(/📍|❌|💡|🛠|⚡|📝|💻|💾/g, '<span class="text-xl">$&</span>')
+        .replace(/\*\*(.*?)\*\*/g, '<b class="text-white">$1</b>')
+        .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1 rounded text-yellow-400">$1</code>')
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-black/50 p-3 rounded-lg my-2 text-green-400 text-xs font-mono">$2</pre>')
+        .replace(/(Error|Exception|Failed)/gi, '<span class="text-red-400 font-bold">$1</span>');
+    }
+
+    function copyAnalysis() {
+      navigator.clipboard.writeText(analysisResult);
+      tg.showAlert("✅ Скопировано!");
+    }
+
+    function copyCodeOnly() {
+      if (codeOnly) {
+        navigator.clipboard.writeText(codeOnly);
+        tg.showAlert("✅ Код скопирован!");
+      } else {
+        tg.showAlert("В ответе нет кода");
+      }
     }
 
     function reset() {
+      document.getElementById("code-input").value = "";
       document.getElementById("result-view").classList.add("hidden");
       document.getElementById("input-view").classList.remove("hidden");
-      document.getElementById("code-input").value = "";
-      fixedCode = "";
-      tg.HapticFeedback.impactOccurred("light");
     }
   </script>
 </body>
@@ -623,23 +646,280 @@ MINI_APP_HTML = """
 """
 
 # ============================================
-# FASTAPI (WEB SERVER)
+# TELEGRAM BOT
+# ============================================
+
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+dp = Dispatcher()
+
+
+def get_keyboard(show_rating=True):
+    buttons = []
+    
+    if show_rating:
+        buttons.append([
+            InlineKeyboardButton(text="👍 Помогло", callback_data="rate_good"),
+            InlineKeyboardButton(text="👎 Не помогло", callback_data="rate_bad")
+        ])
+    
+    buttons.extend([
+        [
+            InlineKeyboardButton(text="📋 Копировать", callback_data="copy"),
+            InlineKeyboardButton(text="📥 Скачать", callback_data="download")
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Новый", callback_data="new"),
+            InlineKeyboardButton(text="👨‍💻 Человек", callback_data="human")
+        ]
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_start_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🧠 Открыть BotHost AI",
+            web_app=WebAppInfo(url=WEBAPP_URL)
+        )],
+        [InlineKeyboardButton(text="📊 Статистика AI", callback_data="ai_stats")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
+    ])
+
+
+@dp.message(Command("start"))
+async def cmd_start(m: types.Message):
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=m.chat.id,
+            menu_button=MenuButtonWebApp(text="🧠 AI", web_app=WebAppInfo(url=WEBAPP_URL))
+        )
+    except:
+        pass
+
+    kb_stats = await get_knowledge_stats()
+    
+    await m.answer(
+        f"🧠 **BotHost AI — Самообучающийся помощник**\n\n"
+        f"Я становлюсь умнее с каждым запросом!\n\n"
+        f"📊 **Моя база знаний:**\n"
+        f"• 💾 Решений: `{kb_stats['total_solutions']}`\n"
+        f"• ✅ Надёжных: `{kb_stats['reliable_solutions']}`\n"
+        f"• 👍 Положительных оценок: `{kb_stats['positive_ratings']}`\n\n"
+        f"📤 **Как использовать:**\n"
+        f"→ Пришли лог ошибки\n"
+        f"→ Получи анализ и решение\n"
+        f"→ Оцени ответ — я запомню!\n\n"
+        f"_Чем больше оценок — тем умнее я становлюсь_ 🚀",
+        reply_markup=get_start_keyboard()
+    )
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(m: types.Message):
+    kb_stats = await get_knowledge_stats()
+    
+    cache_rate = 0
+    if stats["from_cache"] + stats["from_ai"] > 0:
+        cache_rate = int(stats["from_cache"] / (stats["from_cache"] + stats["from_ai"]) * 100)
+    
+    await m.answer(
+        f"📊 **Статистика BotHost AI**\n\n"
+        f"**🧠 База знаний:**\n"
+        f"• Всего решений: `{kb_stats['total_solutions']}`\n"
+        f"• Надёжных (>70%): `{kb_stats['reliable_solutions']}`\n"
+        f"• Всего запросов: `{kb_stats['total_queries']}`\n\n"
+        f"**📈 Оценки:**\n"
+        f"• 👍 Положительных: `{kb_stats['positive_ratings']}`\n"
+        f"• 👎 Отрицательных: `{kb_stats['negative_ratings']}`\n\n"
+        f"**⚡ Сессия:**\n"
+        f"• Из кэша: `{stats['from_cache']}`\n"
+        f"• Из Groq: `{stats['from_ai']}`\n"
+        f"• Эффективность кэша: `{cache_rate}%`"
+    )
+
+
+@dp.message(Command("brain"))
+async def cmd_brain(m: types.Message):
+    """Показать что знает AI"""
+    if m.from_user.id != ADMIN_ID:
+        return
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT error_type, COUNT(*) as count, AVG(confidence) as avg_conf
+            FROM solutions
+            GROUP BY error_type
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        rows = await cursor.fetchall()
+    
+    text = "🧠 **Что я знаю:**\n\n"
+    for row in rows:
+        conf = int(row["avg_conf"] * 100)
+        text += f"• {row['error_type']}: {row['count']} решений ({conf}% уверенность)\n"
+    
+    await m.answer(text)
+
+
+@dp.message(F.text | F.document)
+async def handle_message(m: types.Message):
+    if m.text and m.text.startswith("/"):
+        return
+
+    thinking = await m.answer("🧠 *Думаю...*\n💾 Проверяю базу знаний...")
+    await bot.send_chat_action(m.chat.id, "typing")
+
+    text = m.text or m.caption or ""
+    
+    if m.document:
+        try:
+            file = await bot.get_file(m.document.file_id)
+            content = (await bot.download_file(file.file_path)).read().decode('utf-8', errors='ignore')
+            text += f"\n\n{content[-25000:]}"
+        except:
+            pass
+
+    if len(text.strip()) < 10:
+        await thinking.delete()
+        await m.answer("❌ Пришли лог ошибки для анализа")
+        return
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Проанализируй:\n\n{text}"}
+    ]
+
+    answer, model_name, source = await ask_ai(messages, m.from_user.id)
+
+    # Сохраняем для скачивания
+    code_only = ""
+    if "```" in answer:
+        try:
+            code_only = answer.split("```")[1]
+            code_only = "\n".join(code_only.split("\n")[1:])
+        except:
+            pass
+    
+    last_fixed[m.from_user.id] = (code_only or answer, "fix.py", model_name)
+
+    await thinking.delete()
+
+    source_text = "💾 из базы знаний" if source == "cache" else "🌐 от Groq"
+    footer = f"\n\n_⚡ {model_name} | {source_text}_"
+
+    try:
+        await m.answer(answer + footer, reply_markup=get_keyboard())
+    except:
+        await m.answer(answer[:4000] + footer, parse_mode=None, reply_markup=get_keyboard())
+
+
+@dp.callback_query(F.data == "rate_good")
+async def cb_rate_good(cb: types.CallbackQuery):
+    user_id = cb.from_user.id
+    
+    if user_id in pending_ratings:
+        error_hash = pending_ratings[user_id]
+        await update_confidence(error_hash, True)
+        await save_rating(user_id, error_hash, "good")
+        del pending_ratings[user_id]
+    
+    await cb.answer("👍 Спасибо! AI стал умнее!")
+    
+    # Убираем кнопки оценки
+    await cb.message.edit_reply_markup(reply_markup=get_keyboard(show_rating=False))
+
+
+@dp.callback_query(F.data == "rate_bad")
+async def cb_rate_bad(cb: types.CallbackQuery):
+    user_id = cb.from_user.id
+    
+    if user_id in pending_ratings:
+        error_hash = pending_ratings[user_id]
+        await update_confidence(error_hash, False)
+        await save_rating(user_id, error_hash, "bad")
+        del pending_ratings[user_id]
+    
+    await cb.answer("📝 Учтём! Попробуй переформулировать запрос")
+    await cb.message.edit_reply_markup(reply_markup=get_keyboard(show_rating=False))
+
+
+@dp.callback_query(F.data == "ai_stats")
+async def cb_ai_stats(cb: types.CallbackQuery):
+    kb_stats = await get_knowledge_stats()
+    await cb.message.answer(
+        f"🧠 **База знаний AI:**\n\n"
+        f"💾 Решений: `{kb_stats['total_solutions']}`\n"
+        f"✅ Надёжных: `{kb_stats['reliable_solutions']}`\n"
+        f"👍 Оценок: `{kb_stats['positive_ratings']}`"
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "download")
+async def cb_download(cb: types.CallbackQuery):
+    if cb.from_user.id not in last_fixed:
+        await cb.answer("Нет данных")
+        return
+    
+    content, filename, _ = last_fixed[cb.from_user.id]
+    file = BufferedInputFile(file=content.encode('utf-8'), filename=filename)
+    await bot.send_document(cb.message.chat.id, file)
+    await cb.answer("📥 Отправлено!")
+
+
+@dp.callback_query(F.data == "copy")
+async def cb_copy(cb: types.CallbackQuery):
+    if cb.from_user.id not in last_fixed:
+        await cb.answer("Нет данных")
+        return
+    
+    content, _, _ = last_fixed[cb.from_user.id]
+    await cb.message.answer(f"```\n{content[:4000]}\n```", parse_mode="Markdown")
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "new")
+async def cb_new(cb: types.CallbackQuery):
+    await cb.answer("Жду новый лог!")
+    await cb.message.answer("📤 Отправь лог ошибки")
+
+
+@dp.callback_query(F.data == "help")
+async def cb_help(cb: types.CallbackQuery):
+    await cb.message.answer(
+        "📖 **Как я учусь:**\n\n"
+        "1️⃣ Ты присылаешь лог ошибки\n"
+        "2️⃣ Я ищу решение в своей базе\n"
+        "3️⃣ Если не нашёл — спрашиваю Groq\n"
+        "4️⃣ Сохраняю решение в базу\n"
+        "5️⃣ Ты оцениваешь ответ\n"
+        "6️⃣ Я запоминаю что работает!\n\n"
+        "🧠 _Чем больше оценок — тем умнее я становлюсь!_"
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "human")
+async def cb_human(cb: types.CallbackQuery):
+    await bot.send_message(ADMIN_ID, f"🆘 @{cb.from_user.username} | ID: {cb.from_user.id}")
+    await cb.answer("Админ уведомлён!")
+
+
+# ============================================
+# FASTAPI SERVER
 # ============================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Запуск бота в фоне
+    await init_database()
     asyncio.create_task(start_bot())
     yield
 
 app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -649,7 +929,17 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "bot": "running"}
+    return {"status": "ok"}
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return HTMLResponse(content="", status_code=204)
+
+
+@app.get("/api/stats")
+async def api_stats():
+    return await get_knowledge_stats()
 
 
 @app.post("/api/fix")
@@ -660,49 +950,48 @@ async def api_fix(request: Request):
         user_id = data.get("user_id", 0)
         
         if not code.strip():
-            return JSONResponse({"error": "Код пустой"}, status_code=400)
-
-        system = """Ты — эксперт по исправлению кода. 
-Верни ТОЛЬКО исправленный код в блоке ```.
-Никакого текста до или после — только код.
-Если это Python — ```python, если JS — ```javascript"""
+            return JSONResponse({"error": "Пусто"}, status_code=400)
 
         messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": code}
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Проанализируй:\n\n{code[:30000]}"}
         ]
 
-        answer, model = await ask_ai(messages, user_id)
+        answer, model, source = await ask_ai(messages, user_id)
 
-        # Извлекаем код
+        code_only = ""
         if "```" in answer:
-            parts = answer.split("```")
-            code_block = parts[1] if len(parts) > 1 else answer
-            lang = code_block.split("\n")[0].strip().lower()
-            clean_code = "\n".join(code_block.split("\n")[1:])
-            
-            ext = ".py"
-            if "javascript" in lang or "js" in lang:
-                ext = ".js"
-            elif "typescript" in lang or "ts" in lang:
-                ext = ".ts"
-            elif "go" in lang:
-                ext = ".go"
-            
-            return {
-                "fixed_code": clean_code.strip(),
-                "filename": f"fixed{ext}",
-                "model": model
-            }
-        else:
-            return {
-                "fixed_code": answer,
-                "filename": "fixed.txt",
-                "model": model
-            }
+            try:
+                code_only = "\n".join(answer.split("```")[1].split("\n")[1:]).strip()
+            except:
+                pass
+        
+        return {
+            "fixed_code": answer,
+            "code_only": code_only,
+            "model": model,
+            "source": source
+        }
 
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/rate")
+async def api_rate(request: Request):
+    try:
+        data = await request.json()
+        user_id = data.get("user_id", 0)
+        rating = data.get("rating", "good")
+        
+        if user_id in pending_ratings:
+            error_hash = pending_ratings[user_id]
+            await update_confidence(error_hash, rating == "good")
+            await save_rating(user_id, error_hash, rating)
+        
+        return {"status": "ok"}
+    except:
+        return {"status": "error"}
 
 
 # ============================================
@@ -716,11 +1005,10 @@ async def start_bot():
 
 def main():
     print("=" * 50)
-    print("🚀 BotHost AI Ultimate Edition")
+    print("🧠 BotHost AI — Самообучающаяся система")
     print("=" * 50)
-    print(f"📡 Web Server: http://0.0.0.0:{PORT}")
-    print(f"🌐 Mini App URL: {WEBAPP_URL}")
-    print(f"🤖 Bot: Starting...")
+    print(f"📡 Web: http://0.0.0.0:{PORT}")
+    print(f"💾 База: {DB_PATH}")
     print("=" * 50)
     
     uvicorn.run(app, host="0.0.0.0", port=PORT)
