@@ -37,7 +37,7 @@ import aiosqlite
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7869311061:AAGPstYpuGk7CZTHBQ-_1IL7FCXDyUfIXPY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8473513085"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://supportbothost.bothost.ru")
-PORT = int(os.getenv("PORT", "3000"))
+PORT = int(os.getenv("PORT", "8080"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 
 # Путь к базе данных
@@ -458,24 +458,7 @@ MINI_APP_HTML = """
       --success: #00ff88;
     }
 
-    .light-theme {
-      --primary: #00d4aa;
-      --primary-dark: #00b894;
-      --bg-dark: #f5f5f5;
-      --bg-card: #ffffff;
-      --bg-input: #e8e8e8;
-      --text-primary: #000000;
-      --text-secondary: #666666;
-      --border: #d1d5db;
-      --error: #ff4757;
-      --success: #00d4aa;
-    }
-
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
       font-family: 'Inter', -apple-system, sans-serif;
@@ -486,24 +469,15 @@ MINI_APP_HTML = """
     }
 
     .bg-animated {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: radial-gradient(circle at 20% 80%, rgba(0, 255, 136, 0.08) 0%, transparent 50%),
                   radial-gradient(circle at 80% 20%, rgba(0, 204, 106, 0.06) 0%, transparent 50%),
-                  radial-gradient(circle at 40% 40%, rgba(0, 255, 136, 0.04) 0%, transparent 60%),
                   var(--bg-dark);
       z-index: -1;
     }
 
     .bg-grid {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background-image: linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
                         linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
       background-size: 50px 50px;
@@ -511,451 +485,216 @@ MINI_APP_HTML = """
     }
 
     .logo-glow {
-      text-shadow: 0 0 10px rgba(0, 255, 136, 0.8),
-                   0 0 20px rgba(0, 255, 136, 0.6),
-                   0 0 40px rgba(0, 255, 136, 0.4);
-      animation: pulse-glow 2s ease-in-out infinite;
+      text-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+      animation: pulse-glow 3s ease-in-out infinite;
     }
 
     @keyframes pulse-glow {
       0%, 100% { opacity: 1; }
-      50% { opacity: 0.8; }
+      50% { opacity: 0.7; }
     }
 
     .card {
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 16px;
-      backdrop-filter: blur(10px);
-    }
-
-    .card-glow {
-      box-shadow: 0 0 20px rgba(0, 255, 136, 0.1),
-                  inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
 
     .btn-primary {
       background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-      color: #000;
-      font-weight: 600;
-      border: none;
-      border-radius: 12px;
-      padding: 16px 24px;
-      cursor: pointer;
-      transition: all 0.3s ease;
-      box-shadow: 0 4px 20px rgba(0, 255, 136, 0.3);
+      color: #000; font-weight: 600; border: none; border-radius: 12px;
+      padding: 16px; cursor: pointer; transition: all 0.2s;
+      box-shadow: 0 4px 15px rgba(0, 255, 136, 0.2);
     }
-
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 30px rgba(0, 255, 136, 0.4);
-    }
-
-    .btn-primary:active {
-      transform: scale(0.98);
-    }
+    .btn-primary:active { transform: scale(0.98); }
 
     .btn-secondary {
-      background: var(--bg-input);
-      color: var(--text-primary);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px 20px;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .btn-secondary:hover {
-      background: var(--border);
+      background: var(--bg-input); color: white; border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px; cursor: pointer;
     }
 
     .code-editor {
       font-family: 'JetBrains Mono', monospace;
       background: var(--bg-input);
       border: 2px solid var(--border);
-      border-radius: 16px;
-      color: #e2e8f0;
-      resize: none;
-      transition: all 0.3s ease;
+      border-radius: 16px; color: #e2e8f0; resize: none;
+      transition: border-color 0.3s;
     }
-
-    .code-editor:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 4px rgba(0, 255, 136, 0.1);
-    }
-
-    .code-editor::placeholder {
-      color: #4a4a5e;
-    }
-
-    .message {
-      animation: message-in 0.3s ease;
-    }
-
-    @keyframes message-in {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .message-ai {
-      background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 204, 106, 0.05) 100%);
-      border-left: 3px solid var(--primary);
-    }
-
-    .message-user {
-      background: var(--bg-input);
-      border-left: 3px solid #6366f1;
-    }
-
-    .code-block {
-      font-family: 'JetBrains Mono', monospace;
-      background: #0d0d14;
-      border-radius: 8px;
-      padding: 12px;
-      overflow-x: auto;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-
-    .status-bar {
-      background: rgba(0, 255, 136, 0.1);
-      border: 1px solid rgba(0, 255, 136, 0.2);
-      border-radius: 100px;
-      padding: 6px 12px;
-      font-size: 12px;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--primary);
-      animation: blink 1.5s infinite;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
-    }
+    .code-editor:focus { outline: none; border-color: var(--primary); }
+    .code-editor::placeholder { color: #4a4a5e; }
 
     .loader {
-      width: 60px;
-      height: 60px;
+      width: 50px; height: 50px;
       border: 3px solid var(--border);
       border-top-color: var(--primary);
       border-radius: 50%;
       animation: spin 1s linear infinite;
     }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
+    .fade-in { animation: fadeIn 0.4s ease; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-    .typing-indicator {
-      display: flex;
-      gap: 4px;
-      padding: 8px 12px;
-    }
-
-    .typing-dot {
-      width: 8px;
-      height: 8px;
-      background: var(--primary);
-      border-radius: 50%;
-      animation: typing 1.4s infinite;
-    }
-
-    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
-
-    @keyframes typing {
-      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-      30% { transform: translateY(-8px); opacity: 1; }
-    }
-
-    ::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: var(--bg-dark);
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 3px;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: #3a3a4e;
-    }
-
-    .fade-in {
-      animation: fadeIn 0.4s ease;
-    }
-
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-
-    .hl-error { color: #ff6b6b; font-weight: 600; }
+    /* Syntax Highlighting */
+    .hl-error { color: #ff5f5f; font-weight: bold; }
     .hl-success { color: #00ff88; }
-    .hl-warning { color: #ffd93d; }
-    .hl-info { color: #6366f1; }
-    .hl-command { color: #00d4ff; }
+    .hl-cmd { color: #00d4ff; }
+    .code-block {
+      background: #000000; padding: 12px; border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace; font-size: 12px;
+      overflow-x: auto; margin-top: 8px; border: 1px solid #333;
+    }
   </style>
 </head>
 <body>
   <div class="bg-animated"></div>
   <div class="bg-grid"></div>
 
-  <div class="min-h-screen flex flex-col p-4 pb-6 max-w-2xl mx-auto">
-    <!-- Хедер -->
+  <div class="min-h-screen flex flex-col p-4 max-w-2xl mx-auto">
+    
+    <!-- HEADER -->
     <header class="text-center py-6 fade-in">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 mb-4">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-green-500/10 mb-4">
         <span class="text-4xl">🧠</span>
       </div>
       <h1 class="text-2xl font-bold logo-glow mb-2" style="color: var(--primary);">BotHost AI</h1>
-      <p class="text-sm text-gray-500 mb-3">Умный помощник по коду</p>
-
-      <!-- Статус -->
-      <div class="flex justify-center gap-3 flex-wrap">
-        <div class="status-bar">
-          <div class="status-dot"></div>
-          <span style="color: var(--primary);">Online</span>
+      
+      <div class="flex justify-center gap-3 mt-4">
+        <div class="flex items-center gap-2 bg-green-500/10 px-3 py-1 rounded-full border border-green-500/20">
+          <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+          <span class="text-xs text-green-400">Online</span>
         </div>
-        <div class="status-bar" id="stats-bar">
-          <span>💾</span>
-          <span id="solutions-count">—</span>
-          <span class="text-gray-500">решений</span>
+        <div class="flex items-center gap-2 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+          <span class="text-xs text-blue-400" id="stats-badge">Загрузка...</span>
         </div>
       </div>
     </header>
 
-    <!-- Контент -->
     <main class="flex-1 flex flex-col">
-      <!-- Экран ввода -->
+      
+      <!-- INPUT SCREEN -->
       <div id="input-screen" class="flex-1 flex flex-col fade-in">
-        <!-- Быстрые подсказки -->
         <div class="grid grid-cols-2 gap-2 mb-4">
-          <button onclick="insertExample('python')" class="btn-secondary text-left text-xs py-3">
-            <span class="text-lg mb-1 block">🐍</span>
-            Python ошибка
+          <button onclick="insertExample('python')" class="btn-secondary text-left text-xs py-3 hover:border-green-500/50 transition">
+            <span class="text-lg block mb-1">🐍</span> Python ошибка
           </button>
-          <button onclick="insertExample('node')" class="btn-secondary text-left text-xs py-3">
-            <span class="text-lg mb-1 block">💚</span>
-            Node.js ошибка
+          <button onclick="insertExample('node')" class="btn-secondary text-left text-xs py-3 hover:border-green-500/50 transition">
+            <span class="text-lg block mb-1">💚</span> Node.js ошибка
           </button>
         </div>
 
-        <!-- Поле ввода -->
         <div class="flex-1 flex flex-col mb-4">
-          <label class="text-xs text-gray-500 mb-2 flex items-center gap-2">
-            <span>📋</span>
-            Вставь лог ошибки или код
-          </label>
-          <textarea
-            id="input-code"
-            class="code-editor flex-1 min-h-[200px] p-4 text-sm"
-            placeholder="Traceback (most recent call last):
-  File &quot;main.py&quot;, line 42, in <module>
-    bot = Bot(token=TOKEN, parse_mode='HTML')
-TypeError: ...
-
-Вставь сюда лог ошибки — я проанализирую и помогу исправить 🔍"></textarea>
+          <label class="text-xs text-gray-500 mb-2 ml-1">Вставь код или лог ошибки</label>
+          <textarea id="input-code" class="code-editor flex-1 min-h-[200px] p-4 text-xs"
+            placeholder="Пример:&#10;Traceback (most recent call last):&#10;  File 'main.py', line 10...&#10;ModuleNotFoundError: ..."></textarea>
         </div>
 
-        <!-- Кнопка анализа -->
-        <button id="analyze-btn" onclick="analyze()" class="btn-primary w-full text-lg">
-          <span class="mr-2">🔍</span>
-          Анализировать
+        <button onclick="analyze()" class="btn-primary w-full text-lg mb-4">
+          🔍 АНАЛИЗИРОВАТЬ
         </button>
-
-        <!-- Подсказка -->
-        <p class="text-center text-xs text-gray-600 mt-4">
-          🧠 AI учится на каждом запросе • Оценивай ответы чтобы я стал умнее
+        
+        <p class="text-center text-[10px] text-gray-600">
+          AI использует базу знаний и модели Groq
         </p>
       </div>
 
-      <!-- Экран загрузки -->
+      <!-- LOADING SCREEN -->
       <div id="loading-screen" class="hidden flex-1 flex flex-col items-center justify-center fade-in">
         <div class="loader mb-6"></div>
-        <p class="text-lg font-medium mb-2" style="color: var(--primary);">Анализирую...</p>
-        <p class="text-sm text-gray-500 mb-4" id="loading-status">Проверяю базу знаний</p>
-        <div class="typing-indicator">
-          <div class="typing-dot"></div>
-          <div class="typing-dot"></div>
-          <div class="typing-dot"></div>
-        </div>
+        <p class="text-lg font-medium text-green-400">Анализирую...</p>
+        <p class="text-xs text-gray-500 mt-2" id="loading-status">Подключение к мозгу</p>
         <p class="text-xs text-gray-600 mt-6" id="timer">0 сек</p>
       </div>
 
-      <!-- Экран результата -->
+      <!-- RESULT SCREEN -->
       <div id="result-screen" class="hidden flex-1 flex flex-col fade-in">
-        <!-- Заголовок результата -->
         <div class="flex items-center justify-between mb-4">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 flex items-center justify-center">
-              <span class="text-xl">✨</span>
-            </div>
+          <div class="flex items-center gap-2">
+            <span class="text-green-400 text-xl">✨</span>
             <div>
-              <p class="font-medium">Анализ готов</p>
-              <p class="text-xs text-gray-500" id="result-meta">—</p>
+              <p class="font-bold text-sm">Готово</p>
+              <p class="text-[10px] text-gray-500" id="result-meta">AI • 0.5s</p>
             </div>
           </div>
-          <div class="flex gap-2">
-            <span id="source-badge" class="status-bar text-xs">💾 База</span>
-          </div>
+          <span id="source-badge" class="text-[10px] bg-purple-500/10 text-purple-400 px-2 py-1 rounded-full border border-purple-500/20">🧠 AI</span>
         </div>
 
-        <!-- Результат -->
-        <div class="card card-glow flex-1 overflow-hidden mb-4">
+        <div class="card flex-1 overflow-hidden mb-4 bg-[#0d0d14]">
           <div class="p-4 max-h-[50vh] overflow-y-auto">
-            <div id="result-content" class="text-sm leading-relaxed"></div>
+            <div id="result-content" class="text-sm leading-relaxed text-gray-300"></div>
           </div>
         </div>
 
-        <!-- Оценка -->
-        <div class="card p-4 mb-4">
-          <p class="text-xs text-gray-500 mb-3 text-center">Это помогло?</p>
-          <div class="flex gap-3">
-            <button onclick="rate('good')" class="flex-1 btn-secondary py-4 hover:bg-green-500/10 hover:border-green-500/30 transition-all">
-              <span class="text-2xl block mb-1">👍</span>
-              <span class="text-xs">Да, спасибо!</span>
-            </button>
-            <button onclick="rate('bad')" class="flex-1 btn-secondary py-4 hover:bg-red-500/10 hover:border-red-500/30 transition-all">
-              <span class="text-2xl block mb-1">👎</span>
-              <span class="text-xs">Не помогло</span>
-            </button>
+        <div class="card p-3 mb-4">
+          <p class="text-[10px] text-center text-gray-500 mb-2">Это помогло?</p>
+          <div class="flex gap-2">
+            <button onclick="rate('good')" class="flex-1 py-2 bg-green-500/10 text-green-400 rounded-lg hover:bg-green-500/20 text-xs">👍 Да</button>
+            <button onclick="rate('bad')" class="flex-1 py-2 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 text-xs">👎 Нет</button>
           </div>
         </div>
 
-        <!-- Действия -->
         <div class="grid grid-cols-2 gap-3 mb-4">
-          <button onclick="copyResult()" class="btn-secondary py-3">
-            <span class="mr-2">📋</span>
-            Копировать
-          </button>
-          <button onclick="copyCodeOnly()" class="btn-primary py-3">
-            <span class="mr-2">💻</span>
-            Только код
-          </button>
+          <button onclick="copyResult()" class="btn-secondary py-3 text-xs">📋 Текст</button>
+          <button onclick="copyCodeOnly()" class="btn-secondary py-3 text-xs bg-white/5">💻 Только Код</button>
         </div>
 
-        <!-- Новый анализ -->
-        <button onclick="reset()" class="btn-secondary w-full py-4">
-          <span class="mr-2">🔄</span>
-          Новый анализ
+        <button onclick="reset()" class="w-full py-3 text-gray-500 text-xs hover:text-white transition">
+          🔄 Новый анализ
         </button>
       </div>
-    </main>
 
-    <!-- Футер -->
-    <footer class="text-center pt-4 mt-auto">
-      <p class="text-xs text-gray-600">
-        Powered by <span style="color: var(--primary);">Llama 3.3</span> •
-        <span style="color: var(--primary);">Mixtral</span> •
-        <span style="color: var(--primary);">Gemma 2</span>
-      </p>
-    </footer>
+    </main>
   </div>
 
   <script>
-    // Telegram WebApp
     const tg = window.Telegram.WebApp;
-    tg.ready();
+    tg.ready(); 
     tg.expand();
+    
+    // ИСПРАВЛЕНИЕ: Базовый URL для fetch
+    const BASE_URL = window.location.origin;
 
     try {
       tg.setHeaderColor('#0a0a0f');
       tg.setBackgroundColor('#0a0a0f');
     } catch(e) {}
 
-    // Переменные
-    let resultText = "";
-    let codeOnly = "";
+    let resultText = "", codeOnly = "";
     let timerInterval = null;
-    let seconds = 0;
-    let theme = "dark";
 
-    // Загружаем статистику
-    loadStats();
+    // Load Stats
+    fetch(`${BASE_URL}/api/stats`)
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById("stats-badge").textContent = `${data.total_solutions} решений`;
+      })
+      .catch(() => {
+        document.getElementById("stats-badge").textContent = "Online";
+      });
 
-    // Переключение темы
-    function toggleTheme() {
-      theme = theme === "dark" ? "light" : "dark";
-      document.body.classList.toggle("light-theme");
-      localStorage.setItem("theme", theme);
-    }
-
-    // Проверяем сохранённую тему
-    if (localStorage.getItem("theme") === "light") {
-      toggleTheme();
-    }
-
-    async function loadStats() {
-      try {
-        const res = await fetch("/api/stats");
-        const data = await res.json();
-        document.getElementById("solutions-count").textContent = data.total_solutions || 0;
-      } catch(e) {
-        document.getElementById("solutions-count").textContent = "0";
-      }
-    }
-
-    // Примеры для быстрого ввода
     function insertExample(type) {
       const examples = {
-        python: `Traceback (most recent call last):
-  File "main.py", line 10, in <module>
-    from aiogram import Bot
-ModuleNotFoundError: No module named 'aiogram'`,
-        node: `Error: Cannot find module 'express'
-    at Function.Module._resolveFilename (node:internal/modules/cjs/loader:933:15)
-    at Function.Module._load (node:internal/modules/cjs/loader:778:27)`
+        python: `Traceback (most recent call last):\\n  File "main.py", line 10, in <module>\\n    from aiogram import Bot\\nModuleNotFoundError: No module named 'aiogram'`,
+        node: `Error: Cannot find module 'express'\\n    at Function.Module._resolveFilename`
       };
-
-      document.getElementById("input-code").value = examples[type] || "";
+      document.getElementById("input-code").value = examples[type];
       haptic("light");
     }
 
-    // Анализ
     async function analyze() {
       const input = document.getElementById("input-code").value.trim();
+      if (!input || input.length < 5) return tg.showAlert("Вставь текст ошибки!");
 
-      if (!input) {
-        tg.showAlert("Вставь лог ошибки!");
-        return;
-      }
-
-      if (input.length < 15) {
-        tg.showAlert("Лог слишком короткий. Вставь полный текст ошибки.");
-        return;
-      }
-
-      // Показываем загрузку
       showScreen("loading");
       startTimer();
-      updateLoadingStatus("Проверяю базу знаний...");
-      haptic("light");
+      haptic("medium");
 
       try {
-        // Имитация этапов
-        setTimeout(() => updateLoadingStatus("Анализирую ошибку..."), 1500);
-        setTimeout(() => updateLoadingStatus("Готовлю решение..."), 4000);
+        // Имитация прогресса
+        setTimeout(() => document.getElementById("loading-status").textContent = "Анализирую логи...", 1000);
+        setTimeout(() => document.getElementById("loading-status").textContent = "Генерирую решение...", 2500);
 
-        const response = await fetch("/api/fix", {
+        const res = await fetch(`${BASE_URL}/api/fix`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -964,63 +703,30 @@ ModuleNotFoundError: No module named 'aiogram'`,
           })
         });
 
-        const data = await response.json();
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
 
-        if (data.error) {
-          throw new Error(data.error);
-        }
+        resultText = data.fixed_code;
+        codeOnly = data.code_only;
 
-        resultText = data.fixed_code || "";
-        codeOnly = data.code_only || "";
-
-        // Отображаем результат
         document.getElementById("result-content").innerHTML = formatResult(resultText);
-        document.getElementById("result-meta").textContent = `${data.model || 'AI'} • ${seconds} сек`;
-        document.getElementById("source-badge").innerHTML =
-          data.source === "cache" ? "💾 Из базы" : "🌐 Groq";
-
+        document.getElementById("source-badge").textContent = data.source === "cache" ? "💾 База" : "🌐 Groq";
+        
         stopTimer();
         showScreen("result");
         haptic("success");
 
-        // Обновляем статистику
-        loadStats();
-
-      } catch (error) {
+      } catch (e) {
         stopTimer();
         showScreen("input");
-        tg.showAlert("Ошибка: " + (error.message || "Попробуй ещё раз"));
+        tg.showAlert("Ошибка: " + e.message);
         haptic("error");
       }
     }
 
-    // Форматирование результата
-    function formatResult(text) {
-      return text
-        .replace(/(📍|❌|💡|🛠|⚡|📝|💻|💾|✅)/g, '<span style="font-size: 1.3em;">$1</span>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white">$1</strong>')
-        .replace(/`([^`]+)`/g, '<code class="bg-black/50 px-1.5 py-0.5 rounded text-yellow-400 text-xs">$1</code>')
-        .replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-          return `<div class="code-block my-3"><div class="text-xs text-gray-500 mb-2">${lang || 'code'}</div><code class="text-green-400">${escapeHtml(code.trim())}</code></div>`;
-        })
-        .replace(/(Error|Exception|Failed|Traceback)/gi, '<span class="hl-error">$1</span>')
-        .replace(/(pip install \S+)/g, '<span class="hl-command">$1</span>')
-        .replace(/(npm install \S+)/g, '<span class="hl-command">$1</span>')
-        .replace(/(Вариант \d)/g, '<span class="hl-warning">$1</span>')
-        .replace(/(✅|Успех|Решено)/g, '<span class="hl-success">$1</span>')
-        .replace(/\n/g, '<br>');
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    // Оценка
     async function rate(rating) {
       try {
-        await fetch("/api/rate", {
+        await fetch(`${BASE_URL}/api/rate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1028,89 +734,56 @@ ModuleNotFoundError: No module named 'aiogram'`,
             rating: rating
           })
         });
-
-        if (rating === "good") {
-          tg.showAlert("✅ Спасибо! AI стал умнее!");
-        } else {
-          tg.showAlert("📝 Учтём! Попробуй уточнить запрос.");
-        }
-
+        tg.showAlert(rating === "good" ? "✅ Спасибо!" : "📝 Учтём.");
         haptic("light");
-        loadStats();
-
-      } catch(e) {
-        console.error(e);
-      }
+      } catch(e) {}
     }
 
-    // Копирование
-    function copyResult() {
-      navigator.clipboard.writeText(resultText).then(() => {
-        tg.showAlert("✅ Скопировано!");
-        haptic("light");
-      });
+    function formatResult(text) {
+      return text
+        .replace(/(📍|❌|💡|🛠|⚡|📝)/g, '<br><strong class="text-lg text-white">$1</strong>')
+        .replace(/`([^`]+)`/g, '<code class="bg-white/10 px-1 rounded text-green-300">$1</code>')
+        .replace(/```(\w*)\n([\s\S]*?)```/g, '<div class="code-block">$2</div>')
+        .replace(/\\n/g, '<br>');
     }
 
-    function copyCodeOnly() {
-      if (codeOnly) {
-        navigator.clipboard.writeText(codeOnly).then(() => {
-          tg.showAlert("✅ Код скопирован!");
-          haptic("light");
-        });
-      } else {
-        tg.showAlert("В ответе нет блока кода");
-      }
-    }
-
-    // Сброс
-    function reset() {
-      document.getElementById("input-code").value = "";
-      showScreen("input");
-      haptic("light");
-    }
-
-    // Утилиты
     function showScreen(name) {
-      document.getElementById("input-screen").classList.add("hidden");
-      document.getElementById("loading-screen").classList.add("hidden");
-      document.getElementById("result-screen").classList.add("hidden");
-      document.getElementById(name + "-screen").classList.remove("hidden");
+      ['input', 'loading', 'result'].forEach(id => {
+        document.getElementById(`${id}-screen`).classList.add('hidden');
+      });
+      document.getElementById(`${name}-screen`).classList.remove('hidden');
     }
 
     function startTimer() {
-      seconds = 0;
+      let sec = 0;
       timerInterval = setInterval(() => {
-        seconds++;
-        document.getElementById("timer").textContent = seconds + " сек";
+        document.getElementById("timer").textContent = ++sec + " сек";
       }, 1000);
     }
 
     function stopTimer() {
-      if (timerInterval) {
-        clearInterval(timerInterval);
-        timerInterval = null;
-      }
+      if (timerInterval) clearInterval(timerInterval);
     }
 
-    function updateLoadingStatus(text) {
-      document.getElementById("loading-status").textContent = text;
+    function copyResult() { navigator.clipboard.writeText(resultText); tg.showAlert("Скопировано!"); }
+    function copyCodeOnly() { 
+      if(codeOnly) { navigator.clipboard.writeText(codeOnly); tg.showAlert("Код скопирован!"); }
+      else tg.showAlert("Код не найден");
+    }
+    
+    function reset() {
+      document.getElementById("input-code").value = "";
+      showScreen("input");
     }
 
     function haptic(type) {
-      try {
-        if (type === "success") {
-          tg.HapticFeedback.notificationOccurred("success");
-        } else if (type === "error") {
-          tg.HapticFeedback.notificationOccurred("error");
-        } else {
-          tg.HapticFeedback.impactOccurred("light");
-        }
-      } catch(e) {}
+      try { tg.HapticFeedback.impactOccurred(type); } catch(e) {}
     }
   </script>
 </body>
 </html>
 """
+
 
 # ============================================
 # TELEGRAM BOT
@@ -1453,6 +1126,6 @@ def main():
     logger.info(f"💾 База: {DB_PATH}")
     logger.info("=" * 50)
 
+
 if __name__ == "__main__":
-    main()
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
