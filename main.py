@@ -1453,7 +1453,6 @@ def main():
     logger.info(f"💾 База: {DB_PATH}")
     logger.info("=" * 50)
 
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
-
 if __name__ == "__main__":
     main()
+uvicorn.run(app, host="0.0.0.0", port=8080)
