@@ -1,57 +1,63 @@
 import httpx
-from config import GROQ_API_KEY
+from config import OPENROUTER_API_KEY
 
-# ТОЛЬКО МОЩНЫЕ МОДЕЛИ
-# DeepSeek R1 - это лучшая модель для кода сейчас (лучше GPT-4 в задачах на логику)
+# ============================================
+# ВСЕ ТОПОВЫЕ МОДЕЛИ 2025 (от лучшей к запасной)
+# ============================================
 MODELS = [
-    "deepseek-r1-distill-llama-70b", # ПРИОРИТЕТ №1 (Думает перед ответом)
-    "llama-3.3-70b-versatile",       # ПРИОРИТЕТ №2 (Если DeepSeek лежит)
+    # TIER 1: Самые умные (думают перед ответом)
+    "anthropic/claude-sonnet-4",           # Claude Sonnet 4 — топ для кода
+    "deepseek/deepseek-r1",                      # DeepSeek R1 — chain of thought
+    "google/gemini-2.5-pro-preview",    # Gemini 2.5 Pro
+
+    # TIER 2: Быстрые и умные
+    "anthropic/claude-3.5-sonnet",               # Claude 3.5 Sonnet
+    "openai/gpt-4o",                             # GPT-4o
+    "meta-llama/llama-3.3-70b-instruct",         # Llama 3.3
+
+    # TIER 3: Запасные (если всё лежит)
+    "mistralai/mixtral-8x7b-instruct",           # Mixtral
+    "google/gemini-2.0-flash-001",               # Gemini Flash
 ]
 
-# ИНЖЕНЕРНЫЙ ПРОМПТ (Это делает бота умным)
-SYSTEM_PROMPT = """
-Ты — Senior Principal Software Engineer и эксперт по отладке (Debugging Expert).
-Твоя задача — ИСПРАВЛЯТЬ КОД. Не просто болтать, а давать рабочие решения.
+# Хранилище истории по пользователям
+user_context = {}
 
-АЛГОРИТМ РАБОТЫ:
-1. АНАЛИЗ СТЕКА: Найди в логе строки 'Traceback', 'Error', 'Exception'. Пойми, в какой строке упало.
-2. ПРИЧИНА: Объясни технически, почему код не работает (1 предложение).
-3. ИСПРАВЛЕНИЕ: Напиши ПОЛНЫЙ ИСПРАВЛЕННЫЙ БЛОК КОДА. Не кусочки.
+async def ask_openrouter(messages: list, user_id: int) -> tuple[str, str]:
+    """
+    Возвращает (ответ, название_модели)
+    """
+    if user_id not in user_context:
+        user_context[user_id] = []
 
-ТРЕБОВАНИЯ:
-- Если пользователь прислал код с ошибкой -> верни ИСПРАВЛЕННЫЙ код.
-- Код должен быть готов к копированию (в блоках ```language ... ```).
-- Учитывай контекст библиотек (aiogram 3.x, discord.py, flask, fastapi).
-- Если ошибка в imports/dependencies -> напиши команду 'pip install ...'.
-
-Твой стиль: Строгий, точный, профессиональный. Без воды.
-"""
-
-async def solve_problem(user_content: str) -> str:
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
-        "Content-Type": "application/json"
-    }
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content}
+    # Собираем контекст (последние 8 сообщений)
+    history = user_context[user_id][-8:]
+    
+    full_messages = [
+        {"role": "system", "content": messages[0]["content"]}
+    ] + history + [
+        {"role": "user", "content": messages[1]["content"]}
     ]
 
-    async with httpx.AsyncClient(timeout=90.0) as client: # Увеличили таймаут, так как R1 думает долго
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://bothost.ru",  # Для статистики OpenRouter
+        "X-Title": "BotHost AI Support"
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
         for model in MODELS:
             try:
-                # Настройки для КОДА (низкая температура = высокая точность)
                 payload = {
                     "model": model,
-                    "messages": messages,
-                    "temperature": 0.2,  # МИНИМУМ галлюцинаций. Только факты.
-                    "max_tokens": 6000,  # Чтобы влез длинный код
-                    "top_p": 0.95
+                    "messages": full_messages,
+                    "temperature": 0.3,
+                    "max_tokens": 8192
                 }
 
                 response = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
+                    "https://openrouter.ai/api/v1/chat/completions",
                     headers=headers,
                     json=payload
                 )
@@ -60,16 +66,35 @@ async def solve_problem(user_content: str) -> str:
                     data = response.json()
                     answer = data["choices"][0]["message"]["content"]
                     
-                    # Очистка от тегов мышления <think>, если они есть (DeepSeek иногда их оставляет)
-                    # Но иногда полезно оставить, чтобы юзер видел ход мыслей.
-                    # Решим так: оставим как есть, это выглядит "умно".
-                    return answer
-                
-                elif response.status_code == 503:
-                    continue # Перегруз, пробуем Ламу
+                    # Сохраняем в историю
+                    user_context[user_id].append({
+                        "role": "user", 
+                        "content": messages[1]["content"][:1500]
+                    })
+                    user_context[user_id].append({
+                        "role": "assistant", 
+                        "content": answer[:1500]
+                    })
+                    
+                    # Возвращаем ответ + какая модель ответила
+                    model_name = model.split("/")[-1]
+                    return answer, model_name
+
+                elif response.status_code in [429, 503, 529]:
+                    # Rate limit или перегруз — пробуем следующую
+                    continue
+                else:
+                    print(f"[{model}] Error {response.status_code}: {response.text[:200]}")
+                    continue
 
             except Exception as e:
-                print(f"Ошибка модели {model}: {e}")
+                print(f"[{model}] Exception: {e}")
                 continue
 
-    return "⚠️ **Системный сбой.** Серверы перегружены сложными вычислениями. Попробуй отправить лог еще раз через минуту."
+    return "⚠️ Все серверы ИИ сейчас перегружены. Попробуй через минуту.", "none"
+
+
+# Очистка контекста пользователя
+def clear_context(user_id: int):
+    if user_id in user_context:
+        user_context[user_id] = []
