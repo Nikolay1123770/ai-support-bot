@@ -469,7 +469,6 @@ async def cmd_start(m: types.Message):
         s = await get_knowledge_stats()
         stats_text = (
             f"🧠 **Нейросеть:** `Llama 3.3` + `Mixtral`\n"
-            f"📚 **База знаний:** `{s['total_solutions']}` решений\n"
             f"⚡ **Уверенность:** `98.7%`"
         )
     except: pass
