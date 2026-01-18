@@ -3,11 +3,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import Integer, String, DateTime, func, select, BigInteger
 import datetime
 
-DATABASE_URL = "sqlite+aiosqlite:///bot.db"
+DATABASE_URL = "sqlite+aiosqlite:///bothost.db"
 engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
-class Base(DeclarativeBase): pass
+class Base(DeclarativeBase):
+    pass
 
 class User(Base):
     __tablename__ = "users"
@@ -17,31 +18,44 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String, nullable=True)
     join_date: Mapped[datetime.datetime] = mapped_column(DateTime, default=func.now())
     request_count: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_used: Mapped[int] = mapped_column(Integer, default=0)
 
 async def init_db():
-    async with engine.begin() as conn: await conn.run_sync(Base.metadata.create_all)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 async def add_user(tg_id: int, username: str, full_name: str):
     async with async_session() as session:
-        res = await session.execute(select(User).where(User.telegram_id == tg_id))
-        if not res.scalar_one_or_none():
-            session.add(User(telegram_id=tg_id, username=username, full_name=full_name))
+        result = await session.execute(select(User).where(User.telegram_id == tg_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            user = User(telegram_id=tg_id, username=username, full_name=full_name)
+            session.add(user)
+        else:
+            user.username = username
+            user.full_name = full_name
         await session.commit()
 
 async def increment_stats(tg_id: int):
     async with async_session() as session:
-        res = await session.execute(select(User).where(User.telegram_id == tg_id))
-        u = res.scalar_one_or_none()
-        if u: 
-            u.request_count += 1
+        result = await session.execute(select(User).where(User.telegram_id == tg_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.request_count += 1
             await session.commit()
 
-async def get_global_stats():
+async def get_stats():
     async with async_session() as session:
-        users = await session.scalar(select(func.count(User.id)))
-        reqs = await session.scalar(select(func.sum(User.request_count)))
-        return {"users": users, "requests": reqs or 0}
+        total = await session.scalar(select(func.count(User.id)))
+        requests = await session.scalar(select(func.sum(User.request_count)))
+        top = await session.execute(select(User).order_by(User.request_count.desc()).limit(10))
+        return {
+            "users": total or 0,
+            "requests": requests or 0,
+            "top": top.scalars().all()
+        }
 
-async def get_all_users_ids():
+async def get_all_users():
     async with async_session() as session:
-        return (await session.execute(select(User.telegram_id))).scalars().all()
+        result = await session.execute(select(User.telegram_id))
+        return result.scalars().all()
