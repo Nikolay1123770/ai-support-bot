@@ -447,198 +447,676 @@ MINI_APP_HTML = """
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>BotHost AI — Умный анализатор</title>
+  <title>BotHost AI</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    * { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    body { background: linear-gradient(180deg, #0a0a0f 0%, #111118 100%); min-height: 100vh; }
-    .glow { box-shadow: 0 0 30px rgba(0,255,136,0.2); }
-    .code-area { background: #0d1117; border: 2px solid #21262d; }
-    .code-area:focus { border-color: #00ff88; outline: none; }
-    .btn-main { background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); }
-    .result-box { background: #0d1117; border: 1px solid #21262d; }
-    .brain-pulse { animation: pulse 2s infinite; }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    :root {
+      --primary: #00ff88;
+      --primary-dark: #00cc6a;
+      --bg-dark: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-input: #1a1a24;
+      --text-primary: #ffffff;
+      --text-secondary: #8b8b9e;
+      --border: #2a2a3e;
+      --error: #ff4757;
+      --success: #00ff88;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    
+    /* Анимированный фон */
+    .bg-animated {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: 
+        radial-gradient(circle at 20% 80%, rgba(0, 255, 136, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(0, 204, 106, 0.06) 0%, transparent 50%),
+        radial-gradient(circle at 40% 40%, rgba(0, 255, 136, 0.04) 0%, transparent 60%),
+        var(--bg-dark);
+      z-index: -1;
+    }
+    
+    /* Сетка на фоне */
+    .bg-grid {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-image: 
+        linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      z-index: -1;
+    }
+    
+    /* Светящийся логотип */
+    .logo-glow {
+      text-shadow: 
+        0 0 10px rgba(0, 255, 136, 0.8),
+        0 0 20px rgba(0, 255, 136, 0.6),
+        0 0 40px rgba(0, 255, 136, 0.4);
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+    
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.8; }
+    }
+    
+    /* Карточки */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+    }
+    
+    .card-glow {
+      box-shadow: 
+        0 0 20px rgba(0, 255, 136, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Кнопки */
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: #000;
+      font-weight: 600;
+      border: none;
+      border-radius: 12px;
+      padding: 16px 24px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 20px rgba(0, 255, 136, 0.3);
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 30px rgba(0, 255, 136, 0.4);
+    }
+    
+    .btn-primary:active {
+      transform: scale(0.98);
+    }
+    
+    .btn-secondary {
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 20px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .btn-secondary:hover {
+      background: var(--border);
+    }
+    
+    /* Поле ввода кода */
+    .code-editor {
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg-input);
+      border: 2px solid var(--border);
+      border-radius: 16px;
+      color: #e2e8f0;
+      resize: none;
+      transition: all 0.3s ease;
+    }
+    
+    .code-editor:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px rgba(0, 255, 136, 0.1);
+    }
+    
+    .code-editor::placeholder {
+      color: #4a4a5e;
+    }
+    
+    /* Чат-сообщения */
+    .message {
+      animation: message-in 0.3s ease;
+    }
+    
+    @keyframes message-in {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .message-ai {
+      background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 204, 106, 0.05) 100%);
+      border-left: 3px solid var(--primary);
+    }
+    
+    .message-user {
+      background: var(--bg-input);
+      border-left: 3px solid #6366f1;
+    }
+    
+    /* Код в сообщениях */
+    .code-block {
+      font-family: 'JetBrains Mono', monospace;
+      background: #0d0d14;
+      border-radius: 8px;
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    
+    /* Статус-бар */
+    .status-bar {
+      background: rgba(0, 255, 136, 0.1);
+      border: 1px solid rgba(0, 255, 136, 0.2);
+      border-radius: 100px;
+      padding: 6px 12px;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+      animation: blink 1.5s infinite;
+    }
+    
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    
+    /* Лоадер */
+    .loader {
+      width: 60px;
+      height: 60px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    
+    /* Typing indicator */
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 8px 12px;
+    }
+    
+    .typing-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--primary);
+      border-radius: 50%;
+      animation: typing 1.4s infinite;
+    }
+    
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    
+    @keyframes typing {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-8px); opacity: 1; }
+    }
+    
+    /* Скроллбар */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: var(--bg-dark);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3a3a4e;
+    }
+    
+    /* Fade in анимация */
+    .fade-in {
+      animation: fadeIn 0.4s ease;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    /* Подсветка синтаксиса */
+    .hl-error { color: #ff6b6b; font-weight: 600; }
+    .hl-success { color: #00ff88; }
+    .hl-warning { color: #ffd93d; }
+    .hl-info { color: #6366f1; }
+    .hl-command { color: #00d4ff; }
   </style>
 </head>
-<body class="text-white p-4">
-
-  <header class="text-center mb-6 pt-2">
-    <div class="text-3xl mb-2 brain-pulse">🧠</div>
-    <h1 class="text-2xl font-bold" style="color: #00ff88;">BotHost AI</h1>
-    <p class="text-gray-500 text-sm mt-1">Самообучающийся анализатор</p>
-    <div id="stats-badge" class="text-xs text-gray-600 mt-2">
-      💾 База знаний загружается...
-    </div>
-  </header>
-
-  <main>
-    <div id="input-view">
-      <label class="text-xs text-gray-500 mb-2 block">Вставь лог ошибки:</label>
-      <textarea 
-        id="code-input" 
-        class="w-full h-56 code-area rounded-2xl p-4 text-red-400 text-xs resize-none mb-4 font-mono"
-        placeholder="Вставь лог ошибки..."></textarea>
-
-      <button onclick="analyzeLog()" class="w-full btn-main py-4 rounded-2xl font-bold text-lg text-black glow">
-        🧠 АНАЛИЗИРОВАТЬ
-      </button>
+<body>
+  <div class="bg-animated"></div>
+  <div class="bg-grid"></div>
+  
+  <div class="min-h-screen flex flex-col p-4 pb-6 max-w-2xl mx-auto">
+    
+    <!-- Хедер -->
+    <header class="text-center py-6 fade-in">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 mb-4">
+        <span class="text-4xl">🧠</span>
+      </div>
+      <h1 class="text-2xl font-bold logo-glow mb-2" style="color: var(--primary);">BotHost AI</h1>
+      <p class="text-sm text-gray-500 mb-3">Умный помощник по коду</p>
       
-      <div class="mt-4 p-3 rounded-xl bg-gray-900/50 border border-gray-800">
-        <p class="text-xs text-gray-400">
-          🧠 AI учится на каждом запросе. Чем больше оценок — тем умнее!
+      <!-- Статус -->
+      <div class="flex justify-center gap-3 flex-wrap">
+        <div class="status-bar">
+          <div class="status-dot"></div>
+          <span style="color: var(--primary);">Online</span>
+        </div>
+        <div class="status-bar" id="stats-bar">
+          <span>💾</span>
+          <span id="solutions-count">—</span>
+          <span class="text-gray-500">решений</span>
+        </div>
+      </div>
+    </header>
+    
+    <!-- Контент -->
+    <main class="flex-1 flex flex-col">
+      
+      <!-- Экран ввода -->
+      <div id="input-screen" class="flex-1 flex flex-col fade-in">
+        
+        <!-- Быстрые подсказки -->
+        <div class="grid grid-cols-2 gap-2 mb-4">
+          <button onclick="insertExample('python')" class="btn-secondary text-left text-xs py-3">
+            <span class="text-lg mb-1 block">🐍</span>
+            Python ошибка
+          </button>
+          <button onclick="insertExample('node')" class="btn-secondary text-left text-xs py-3">
+            <span class="text-lg mb-1 block">💚</span>
+            Node.js ошибка
+          </button>
+        </div>
+        
+        <!-- Поле ввода -->
+        <div class="flex-1 flex flex-col mb-4">
+          <label class="text-xs text-gray-500 mb-2 flex items-center gap-2">
+            <span>📋</span>
+            Вставь лог ошибки или код
+          </label>
+          <textarea 
+            id="input-code" 
+            class="code-editor flex-1 min-h-[200px] p-4 text-sm"
+            placeholder="Traceback (most recent call last):
+  File &quot;main.py&quot;, line 42, in <module>
+    bot = Bot(token=TOKEN, parse_mode='HTML')
+TypeError: ...
+
+Вставь сюда лог ошибки — я проанализирую и помогу исправить 🔍"></textarea>
+        </div>
+        
+        <!-- Кнопка анализа -->
+        <button id="analyze-btn" onclick="analyze()" class="btn-primary w-full text-lg">
+          <span class="mr-2">🔍</span>
+          Анализировать
+        </button>
+        
+        <!-- Подсказка -->
+        <p class="text-center text-xs text-gray-600 mt-4">
+          🧠 AI учится на каждом запросе • Оценивай ответы чтобы я стал умнее
         </p>
       </div>
-    </div>
-
-    <div id="loading-view" class="hidden text-center py-16">
-      <div class="w-14 h-14 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-      <p class="text-lg font-medium" style="color: #00ff88;">Думаю...</p>
-      <p class="text-gray-500 text-sm mt-2" id="thinking-status">Проверяю базу знаний...</p>
-    </div>
-
-    <div id="result-view" class="hidden">
-      <div class="flex items-center justify-between mb-3">
-        <div class="flex items-center gap-2">
-          <span class="text-green-500 text-lg">✅</span>
-          <span class="text-sm text-gray-300">Готово</span>
+      
+      <!-- Экран загрузки -->
+      <div id="loading-screen" class="hidden flex-1 flex flex-col items-center justify-center fade-in">
+        <div class="loader mb-6"></div>
+        <p class="text-lg font-medium mb-2" style="color: var(--primary);">Анализирую...</p>
+        <p class="text-sm text-gray-500 mb-4" id="loading-status">Проверяю базу знаний</p>
+        <div class="typing-indicator">
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
         </div>
-        <div class="flex items-center gap-2">
-          <span id="source-badge" class="text-xs px-2 py-1 rounded-full bg-purple-500/10 text-purple-400">🧠</span>
-          <span id="model-badge" class="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-400">AI</span>
+        <p class="text-xs text-gray-600 mt-6" id="timer">0 сек</p>
+      </div>
+      
+      <!-- Экран результата -->
+      <div id="result-screen" class="hidden flex-1 flex flex-col fade-in">
+        
+        <!-- Заголовок результата -->
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 flex items-center justify-center">
+              <span class="text-xl">✨</span>
+            </div>
+            <div>
+              <p class="font-medium">Анализ готов</p>
+              <p class="text-xs text-gray-500" id="result-meta">—</p>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <span id="source-badge" class="status-bar text-xs">💾 База</span>
+          </div>
         </div>
-      </div>
-
-      <div class="result-box rounded-2xl p-4 mb-4 max-h-80 overflow-auto">
-        <pre id="analysis-result" class="text-sm leading-relaxed whitespace-pre-wrap font-sans"></pre>
-      </div>
-
-      <!-- Оценка -->
-      <div class="flex gap-3 mb-4">
-        <button onclick="rateAnswer('good')" class="flex-1 py-3 bg-green-900/30 hover:bg-green-900/50 rounded-xl border border-green-500/30 text-green-400 font-medium">
-          👍 Помогло
+        
+        <!-- Результат -->
+        <div class="card card-glow flex-1 overflow-hidden mb-4">
+          <div class="p-4 max-h-[50vh] overflow-y-auto">
+            <div id="result-content" class="text-sm leading-relaxed"></div>
+          </div>
+        </div>
+        
+        <!-- Оценка -->
+        <div class="card p-4 mb-4">
+          <p class="text-xs text-gray-500 mb-3 text-center">Это помогло?</p>
+          <div class="flex gap-3">
+            <button onclick="rate('good')" class="flex-1 btn-secondary py-4 hover:bg-green-500/10 hover:border-green-500/30 transition-all">
+              <span class="text-2xl block mb-1">👍</span>
+              <span class="text-xs">Да, спасибо!</span>
+            </button>
+            <button onclick="rate('bad')" class="flex-1 btn-secondary py-4 hover:bg-red-500/10 hover:border-red-500/30 transition-all">
+              <span class="text-2xl block mb-1">👎</span>
+              <span class="text-xs">Не помогло</span>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Действия -->
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <button onclick="copyResult()" class="btn-secondary py-3">
+            <span class="mr-2">📋</span>
+            Копировать
+          </button>
+          <button onclick="copyCodeOnly()" class="btn-primary py-3">
+            <span class="mr-2">💻</span>
+            Только код
+          </button>
+        </div>
+        
+        <!-- Новый анализ -->
+        <button onclick="reset()" class="btn-secondary w-full py-4">
+          <span class="mr-2">🔄</span>
+          Новый анализ
         </button>
-        <button onclick="rateAnswer('bad')" class="flex-1 py-3 bg-red-900/30 hover:bg-red-900/50 rounded-xl border border-red-500/30 text-red-400 font-medium">
-          👎 Не помогло
-        </button>
       </div>
-
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <button onclick="copyAnalysis()" class="py-3 bg-gray-800 rounded-xl font-medium">
-          📋 Копировать
-        </button>
-        <button onclick="copyCodeOnly()" class="py-3 btn-main rounded-xl text-black font-medium">
-          💻 Только код
-        </button>
-      </div>
-
-      <button onclick="reset()" class="w-full py-3 border border-gray-700 rounded-xl text-gray-400">
-        🔄 Новый анализ
-      </button>
-    </div>
-  </main>
+      
+    </main>
+    
+    <!-- Футер -->
+    <footer class="text-center pt-4 mt-auto">
+      <p class="text-xs text-gray-600">
+        Powered by <span style="color: var(--primary);">Llama 3.3</span> • 
+        <span style="color: var(--primary);">Mixtral</span> • 
+        <span style="color: var(--primary);">Gemma 2</span>
+      </p>
+    </footer>
+    
+  </div>
 
   <script>
+    // Telegram WebApp
     const tg = window.Telegram.WebApp;
     tg.ready();
     tg.expand();
     
-    let analysisResult = "";
+    try {
+      tg.setHeaderColor('#0a0a0f');
+      tg.setBackgroundColor('#0a0a0f');
+    } catch(e) {}
+    
+    // Переменные
+    let resultText = "";
     let codeOnly = "";
-    let currentSource = "";
-
+    let timerInterval = null;
+    let seconds = 0;
+    
     // Загружаем статистику
-    fetch("/api/stats").then(r => r.json()).then(data => {
-      document.getElementById("stats-badge").textContent = 
-        `💾 ${data.total_solutions} решений | ✅ ${data.positive_ratings} оценок`;
-    });
-
-    async function analyzeLog() {
-      const input = document.getElementById("code-input").value.trim();
-      if (!input || input.length < 20) {
+    loadStats();
+    
+    async function loadStats() {
+      try {
+        const res = await fetch("/api/stats");
+        const data = await res.json();
+        document.getElementById("solutions-count").textContent = data.total_solutions || 0;
+      } catch(e) {
+        document.getElementById("solutions-count").textContent = "0";
+      }
+    }
+    
+    // Примеры для быстрого ввода
+    function insertExample(type) {
+      const examples = {
+        python: `Traceback (most recent call last):
+  File "main.py", line 10, in <module>
+    from aiogram import Bot
+ModuleNotFoundError: No module named 'aiogram'`,
+        node: `Error: Cannot find module 'express'
+    at Function.Module._resolveFilename (node:internal/modules/cjs/loader:933:15)
+    at Function.Module._load (node:internal/modules/cjs/loader:778:27)`
+      };
+      
+      document.getElementById("input-code").value = examples[type] || "";
+      haptic("light");
+    }
+    
+    // Анализ
+    async function analyze() {
+      const input = document.getElementById("input-code").value.trim();
+      
+      if (!input) {
         tg.showAlert("Вставь лог ошибки!");
         return;
       }
-
-      document.getElementById("input-view").classList.add("hidden");
-      document.getElementById("loading-view").classList.remove("hidden");
+      
+      if (input.length < 15) {
+        tg.showAlert("Лог слишком короткий. Вставь полный текст ошибки.");
+        return;
+      }
+      
+      // Показываем загрузку
+      showScreen("loading");
+      startTimer();
+      updateLoadingStatus("Проверяю базу знаний...");
+      haptic("light");
       
       try {
+        // Имитация этапов
+        setTimeout(() => updateLoadingStatus("Анализирую ошибку..."), 1500);
+        setTimeout(() => updateLoadingStatus("Готовлю решение..."), 4000);
+        
         const response = await fetch("/api/fix", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             code: input,
             user_id: tg.initDataUnsafe?.user?.id || 0
           })
         });
-
-        const data = await response.json();
-        if (data.error) throw new Error(data.error);
-
-        analysisResult = data.fixed_code || "";
-        codeOnly = data.code_only || "";
-        currentSource = data.source || "ai";
         
-        document.getElementById("analysis-result").innerHTML = formatAnalysis(analysisResult);
-        document.getElementById("model-badge").textContent = data.model || "AI";
-        document.getElementById("source-badge").textContent = 
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        resultText = data.fixed_code || "";
+        codeOnly = data.code_only || "";
+        
+        // Отображаем результат
+        document.getElementById("result-content").innerHTML = formatResult(resultText);
+        document.getElementById("result-meta").textContent = `${data.model || 'AI'} • ${seconds} сек`;
+        document.getElementById("source-badge").innerHTML = 
           data.source === "cache" ? "💾 Из базы" : "🌐 Groq";
         
-        document.getElementById("loading-view").classList.add("hidden");
-        document.getElementById("result-view").classList.remove("hidden");
-
-        tg.HapticFeedback.notificationOccurred("success");
-
+        stopTimer();
+        showScreen("result");
+        haptic("success");
+        
+        // Обновляем статистику
+        loadStats();
+        
       } catch (error) {
-        document.getElementById("loading-view").classList.add("hidden");
-        document.getElementById("input-view").classList.remove("hidden");
-        tg.showAlert("Ошибка: " + error.message);
+        stopTimer();
+        showScreen("input");
+        tg.showAlert("Ошибка: " + (error.message || "Попробуй ещё раз"));
+        haptic("error");
       }
     }
-
-    async function rateAnswer(rating) {
-      await fetch("/api/rate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          user_id: tg.initDataUnsafe?.user?.id || 0,
-          rating: rating
-        })
-      });
-      
-      tg.showAlert(rating === "good" ? "✅ Спасибо! AI стал умнее!" : "📝 Учтём на будущее!");
-      tg.HapticFeedback.impactOccurred("light");
-    }
-
-    function formatAnalysis(text) {
+    
+    // Форматирование результата
+    function formatResult(text) {
       return text
-        .replace(/📍|❌|💡|🛠|⚡|📝|💻|💾/g, '<span class="text-xl">$&</span>')
-        .replace(/\*\*(.*?)\*\*/g, '<b class="text-white">$1</b>')
-        .replace(/`([^`]+)`/g, '<code class="bg-gray-800 px-1 rounded text-yellow-400">$1</code>')
-        .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-black/50 p-3 rounded-lg my-2 text-green-400 text-xs font-mono">$2</pre>')
-        .replace(/(Error|Exception|Failed)/gi, '<span class="text-red-400 font-bold">$1</span>');
+        // Эмодзи больше
+        .replace(/(📍|❌|💡|🛠|⚡|📝|💻|💾|✅)/g, '<span style="font-size: 1.3em;">$1</span>')
+        // Жирный текст
+        .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white">$1</strong>')
+        // Инлайн код
+        .replace(/`([^`]+)`/g, '<code class="bg-black/50 px-1.5 py-0.5 rounded text-yellow-400 text-xs">$1</code>')
+        // Блоки кода
+        .replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+          return `<div class="code-block my-3"><div class="text-xs text-gray-500 mb-2">${lang || 'code'}</div><code class="text-green-400">${escapeHtml(code.trim())}</code></div>`;
+        })
+        // Подсветка ключевых слов
+        .replace(/(Error|Exception|Failed|Traceback)/gi, '<span class="hl-error">$1</span>')
+        .replace(/(pip install \S+)/g, '<span class="hl-command">$1</span>')
+        .replace(/(npm install \S+)/g, '<span class="hl-command">$1</span>')
+        .replace(/(Вариант \d)/g, '<span class="hl-warning">$1</span>')
+        .replace(/(✅|Успех|Решено)/g, '<span class="hl-success">$1</span>')
+        // Переносы строк
+        .replace(/\n/g, '<br>');
     }
-
-    function copyAnalysis() {
-      navigator.clipboard.writeText(analysisResult);
-      tg.showAlert("✅ Скопировано!");
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     }
-
+    
+    // Оценка
+    async function rate(rating) {
+      try {
+        await fetch("/api/rate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: tg.initDataUnsafe?.user?.id || 0,
+            rating: rating
+          })
+        });
+        
+        if (rating === "good") {
+          tg.showAlert("✅ Спасибо! AI стал умнее!");
+        } else {
+          tg.showAlert("📝 Учтём! Попробуй уточнить запрос.");
+        }
+        
+        haptic("light");
+        loadStats();
+        
+      } catch(e) {
+        console.error(e);
+      }
+    }
+    
+    // Копирование
+    function copyResult() {
+      navigator.clipboard.writeText(resultText).then(() => {
+        tg.showAlert("✅ Скопировано!");
+        haptic("light");
+      });
+    }
+    
     function copyCodeOnly() {
       if (codeOnly) {
-        navigator.clipboard.writeText(codeOnly);
-        tg.showAlert("✅ Код скопирован!");
+        navigator.clipboard.writeText(codeOnly).then(() => {
+          tg.showAlert("✅ Код скопирован!");
+          haptic("light");
+        });
       } else {
-        tg.showAlert("В ответе нет кода");
+        tg.showAlert("В ответе нет блока кода");
       }
     }
-
+    
+    // Сброс
     function reset() {
-      document.getElementById("code-input").value = "";
-      document.getElementById("result-view").classList.add("hidden");
-      document.getElementById("input-view").classList.remove("hidden");
+      document.getElementById("input-code").value = "";
+      showScreen("input");
+      haptic("light");
+    }
+    
+    // Утилиты
+    function showScreen(name) {
+      document.getElementById("input-screen").classList.add("hidden");
+      document.getElementById("loading-screen").classList.add("hidden");
+      document.getElementById("result-screen").classList.add("hidden");
+      document.getElementById(name + "-screen").classList.remove("hidden");
+    }
+    
+    function startTimer() {
+      seconds = 0;
+      timerInterval = setInterval(() => {
+        seconds++;
+        document.getElementById("timer").textContent = seconds + " сек";
+      }, 1000);
+    }
+    
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+    
+    function updateLoadingStatus(text) {
+      document.getElementById("loading-status").textContent = text;
+    }
+    
+    function haptic(type) {
+      try {
+        if (type === "success") {
+          tg.HapticFeedback.notificationOccurred("success");
+        } else if (type === "error") {
+          tg.HapticFeedback.notificationOccurred("error");
+        } else {
+          tg.HapticFeedback.impactOccurred("light");
+        }
+      } catch(e) {}
     }
   </script>
 </body>
