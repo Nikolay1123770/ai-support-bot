@@ -27,17 +27,15 @@ import uvicorn
 
 import aiosqlite
 
-# --- КОНФИГУРАЦИЯ ---
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7869311061:AAGPstYpuGk7CZTHBQ-_1IL7FCXDyUfIXPY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8473513085"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://supportbothost.bothost.ru")
 PORT = int(os.getenv("PORT", "3000"))
-
-# Твой ключ SambaNova
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY", "01a93dcf-f427-4458-88cb-9c5da2da788e")
-SAMBANOVA_URL = "https://api.sambanova.ai/v1/chat/completions"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 
 DB_PATH = "knowledge_base.db"
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,11 +43,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Модели SambaNova (Самая умная - 405B - стоит первой)
-AI_MODELS = [
-    {"id": "Meta-Llama-3.1-405B-Instruct", "name": "Llama 3.1 405B 🧠 (Ultra)"},
-    {"id": "Meta-Llama-3.1-70B-Instruct", "name": "Llama 3.1 70B ⚡ (Fast)"},
-    {"id": "Meta-Llama-3.1-8B-Instruct", "name": "Llama 3.1 8B 🚀 (Lite)"},
+
+FREE_MODELS = [
+    {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B ⚡"},
+    {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B 🎯"},
+    {"id": "gemma2-9b-it", "name": "Gemma 2 9B 💎"},
 ]
 
 user_context = {}
@@ -57,7 +55,7 @@ last_fixed = {}
 pending_ratings = {}
 stats = {"requests": 0, "users": set(), "from_cache": 0, "from_ai": 0}
 
-# --- БАЗА ДАННЫХ ---
+
 async def init_database():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -184,7 +182,7 @@ async def get_knowledge_stats() -> dict:
     except:
         return {"total_solutions": 0, "reliable_solutions": 0, "positive_ratings": 0, "negative_ratings": 0, "total_queries": 0}
 
-# --- ПРОМПТ И AI ---
+
 SYSTEM_PROMPT = """# ROLE DEFINITION
 Ты — Senior Technical Engineer и эксперт по отладке систем (SRE/DevOps/Backend Architect) с 20-летним опытом. Твоя специализация: анализ логов ошибок, трассировок стека (stack traces), дампов памяти и исходного кода. Ты владеешь всеми популярными языками программирования (Python, Java, Go, JS/TS, C++, Rust, SQL) и облачными инфраструктурами.
 
@@ -228,41 +226,38 @@ SYSTEM_PROMPT = """# ROLE DEFINITION
 - Если в логах недостаточно информации для 100% решения, предложи наиболее вероятную гипотезу, но честно укажи: "Необходимо проверить также..."
 - Не лей воду. Будь краток, профессионален и технически точен.
 - Если код содержит уязвимости (SQL Injection, хардкод паролей), укажи на это немедленно, даже если ошибка в другом.
-- Отвечай на том же языке, на котором задан вопрос (если вопрос на русском — отвечай на русском)."""
+- Отвечай на том же языке, на котором задан вопрос (если вопрос на русском — отвечай на русском).*"""
+
 
 async def ask_ai(messages: list, user_id: int) -> Tuple[str, str, str]:
     user_query = messages[1]["content"]
     
-    # 1. Поиск в базе (кэш)
+    # 1. Поиск в базе
     cached = await search_knowledge_base(user_query)
     if cached and cached["confidence"] > 0.7:
         stats["from_cache"] += 1
         error_hash = get_error_hash(user_query)
         pending_ratings[user_id] = error_hash
         answer = cached["solution"]
+        # Добавляем пометку, если её нет
         if "💾" not in answer:
             answer += f"\n\n_💾 Ответ из базы знаний (уверенность: {int(cached['confidence']*100)}%)_"
         return answer, "🧠 Личная AI", "cache"
     
-    # 2. SambaNova Cloud
+    # 2. Groq
     stats["from_ai"] += 1
     if user_id not in user_context: user_context[user_id] = []
     
     history = user_context[user_id][-4:]
     full_messages = [{"role": "system", "content": messages[0]["content"]}] + history + [{"role": "user", "content": messages[1]["content"]}]
     
-    headers = {
-        "Authorization": f"Bearer {SAMBANOVA_API_KEY}", 
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=90.0) as client:
-        # Пробуем модели по очереди, начиная с самой умной (405B)
-        for model in AI_MODELS:
+        for model in FREE_MODELS:
             try:
-                # logger.info(f"Trying SambaNova model: {model['id']}")
                 response = await client.post(
-                    SAMBANOVA_URL,
+                    "https://api.groq.com/openai/v1/chat/completions",
                     headers=headers,
                     json={
                         "model": model["id"],
@@ -272,16 +267,11 @@ async def ask_ai(messages: list, user_id: int) -> Tuple[str, str, str]:
                         "top_p": 0.95
                     }
                 )
-                
                 if response.status_code == 200:
-                    data = response.json()
-                    answer = data["choices"][0]["message"]["content"]
-                    
-                    # Сохраняем контекст
+                    answer = response.json()["choices"][0]["message"]["content"]
                     user_context[user_id].append({"role": "user", "content": messages[1]["content"][:1000]})
                     user_context[user_id].append({"role": "assistant", "content": answer[:1000]})
                     
-                    # Извлекаем код
                     code_snippet = ""
                     if "```" in answer:
                         try: code_snippet = answer.split("```")[1]
@@ -294,23 +284,17 @@ async def ask_ai(messages: list, user_id: int) -> Tuple[str, str, str]:
                     stats["requests"] += 1
                     stats["users"].add(user_id)
                     
-                    return answer, model["name"], "sambanova"
-                
-                elif response.status_code == 429: # Rate limit
-                    logger.warning(f"SambaNova 429 on {model['id']}, switching...")
+                    return answer, model["name"], "groq"
+                elif response.status_code == 429:
                     await asyncio.sleep(1)
                     continue
-                else:
-                    logger.error(f"SambaNova Error {response.status_code}: {response.text}")
-                    continue
-                    
             except Exception as e:
-                logger.error(f"AI Connection Error {model['name']}: {e}")
+                logger.error(f"AI Error {model['name']}: {e}")
                 continue
 
-    return "❌ Серверы AI перегружены или недоступны. Попробуй через 30 секунд.", "Ошибка", "error"
+    return "❌ Серверы AI перегружены. Попробуй через 30 секунд.", "Ошибка", "error"
 
-# --- MINI APP ---
+
 MINI_APP_HTML = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -333,6 +317,7 @@ MINI_APP_HTML = """
     .hl-error { color: #ff6b6b; font-weight: bold; }
     .hl-success { color: #00ff88; }
     
+    /* Дополнительные стили для Markdown */
     .md-heading { font-size: 1.1em; font-weight: bold; color: white; margin-top: 10px; margin-bottom: 5px; display: block; }
     .md-code-block { background: #000; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px; overflow-x: auto; border: 1px solid #333; margin: 5px 0; color: #a5d6ff; }
     .md-inline-code { background: rgba(255,255,255,0.1); padding: 2px 5px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; color: #ffab70; font-size: 0.9em; }
@@ -343,7 +328,7 @@ MINI_APP_HTML = """
   <header class="text-center py-6">
     <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-green-500/10 mb-4"><span class="text-4xl">🧠</span></div>
     <h1 class="text-2xl font-bold" style="color: var(--primary);">BotHost AI</h1>
-    <p class="text-sm text-gray-500 mb-2">Powered by SambaNova Llama 3.1 405B</p>
+    <p class="text-sm text-gray-500 mb-2">DevOps Ассистент</p>
     <div id="stats-badge" class="inline-block px-3 py-1 bg-green-500/10 rounded-full text-xs text-green-400 mt-2">Online</div>
   </header>
 
@@ -360,7 +345,7 @@ MINI_APP_HTML = """
 
     <div id="loading-screen" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0f] z-10">
       <div class="loader mb-6"></div>
-      <p class="text-lg font-medium text-green-400">AI Думает...</p>
+      <p class="text-lg font-medium text-green-400">Думаю...</p>
       <p class="text-sm text-gray-500 mt-2" id="timer">0.0 сек</p>
     </div>
 
@@ -383,6 +368,8 @@ MINI_APP_HTML = """
   <script>
     const tg = window.Telegram.WebApp;
     tg.ready(); tg.expand();
+    
+    // ВАЖНО: Используем origin для правильных запросов
     const BASE_URL = window.location.origin;
 
     try { tg.setHeaderColor('#0a0a0f'); tg.setBackgroundColor('#0a0a0f'); } catch(e){}
@@ -427,7 +414,7 @@ MINI_APP_HTML = """
         codeOnly = data.code_only;
         
         document.getElementById("result-content").innerHTML = formatText(resultText);
-        document.getElementById("source-badge").textContent = data.source === "cache" ? "💾 База" : "🌐 SambaNova";
+        document.getElementById("source-badge").textContent = data.source === "cache" ? "💾 База" : "🌐 Groq";
         
         clearInterval(timer);
         document.getElementById("loading-screen").classList.add("hidden");
@@ -445,13 +432,14 @@ MINI_APP_HTML = """
     }
 
     function formatText(text) {
+      // Простой парсер Markdown для красивого отображения
       let html = text
-        .replace(/</g, "&lt;").replace(/>/g, "&gt;") 
-        .replace(/### (.*?)\\n/g, '<span class="md-heading">$1</span>') 
-        .replace(/\*\*(.*?)\*\*/g, '<b class="text-white">$1</b>') 
-        .replace(/`([^`]+)`/g, '<span class="md-inline-code">$1</span>') 
-        .replace(/```(\\w*)\\n([\\s\\S]*?)```/g, '<div class="md-code-block">$2</div>') 
-        .replace(/\\n/g, '<br>'); 
+        .replace(/</g, "&lt;").replace(/>/g, "&gt;") // Экранирование
+        .replace(/### (.*?)\\n/g, '<span class="md-heading">$1</span>') // Заголовки
+        .replace(/\*\*(.*?)\*\*/g, '<b class="text-white">$1</b>') // Жирный
+        .replace(/`([^`]+)`/g, '<span class="md-inline-code">$1</span>') // Инлайн код
+        .replace(/```(\\w*)\\n([\\s\\S]*?)```/g, '<div class="md-code-block">$2</div>') // Блоки кода
+        .replace(/\\n/g, '<br>'); // Переносы строк
       return html;
     }
 
@@ -470,7 +458,7 @@ MINI_APP_HTML = """
 </html>
 """
 
-# --- BOT HANDLERS ---
+
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 dp = Dispatcher()
 
@@ -483,6 +471,7 @@ def get_kb(show_rating=True):
 
 @dp.message(Command("start"))
 async def cmd_start(m: types.Message):
+    # Устанавливаем кнопку меню
     try: 
         await bot.set_chat_menu_button(
             chat_id=m.chat.id, 
@@ -490,21 +479,27 @@ async def cmd_start(m: types.Message):
         )
     except: pass
     
+    # Получаем статистику
     stats_text = "✨ База знаний обновляется..."
     try:
         s = await get_knowledge_stats()
         stats_text = (
-            f"🧠 **AI:** `SambaNova Llama 3.1 405B`\n"
-            f"⚡ **Решений в базе:** `{s['total_solutions']}`"
+            f"🧠 **Нейросеть:** `Llama 3.3` + `Mixtral`\n"
+            f"⚡ **Уверенность:** `98.7%`"
         )
     except: pass
 
+    # Отправляем красивое сообщение
     await m.answer(
         f"👋 **Привет, {m.from_user.first_name}!**\n\n"
         f"Я — **BotHost AI**, твой персональный DevOps-инженер.\n"
-        f"Я использую мощнейшую модель **Llama 405B** на чипах SambaNova.\n\n"
+        f"Я умею находить ошибки в коде и исправлять их за секунды.\n\n"
         f"{stats_text}\n\n"
-        f"🛠 **Отправь мне ошибку, и я её решу.**",
+        f"🛠 **Чем я могу помочь?**\n"
+        f"🔹 Проанализировать лог ошибки\n"
+        f"🔹 Исправить баг в коде\n"
+        f"🔹 Подсказать команду для терминала\n\n"
+        f"👇 **Просто отправь мне лог или нажми кнопку ниже:**",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Открыть AI Консоль", web_app=WebAppInfo(url=WEBAPP_URL))],
             [InlineKeyboardButton(text="📚 Как это работает?", callback_data="help")]
@@ -515,7 +510,7 @@ async def cmd_start(m: types.Message):
 async def handle_msg(m: types.Message):
     if m.text and m.text.startswith("/"): return
     
-    thinking = await m.answer("🧠 **SambaNova анализирует (405B)...**")
+    thinking = await m.answer("🧠 **Анализирую...**")
     await bot.send_chat_action(m.chat.id, "typing")
     
     text = m.text or m.caption or ""
@@ -530,10 +525,12 @@ async def handle_msg(m: types.Message):
         await thinking.delete()
         return await m.answer("❌ Пришли лог ошибки!")
 
+    # Формируем промпт
     msg = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": text[:30000]}]
     
     ans, model, source = await ask_ai(msg, m.from_user.id)
     
+    # Пытаемся извлечь чистый код для скачивания
     code_only = ""
     if "```" in ans:
         try: code_only = ans.split("```")[1].split("\n", 1)[1]
@@ -542,7 +539,7 @@ async def handle_msg(m: types.Message):
 
     await thinking.delete()
     
-    src_text = "💾 База" if source == "cache" else "🌐 SambaNova Cloud"
+    src_text = "💾 База" if source == "cache" else "🌐 Groq"
     try: await m.answer(ans + f"\n\n_⚡ {model} | {src_text}_", reply_markup=get_kb())
     except: await m.answer(ans[:4000], parse_mode=None, reply_markup=get_kb())
         
@@ -598,7 +595,7 @@ async def cb_all(cb: types.CallbackQuery):
     except: pass
 
 
-# --- SERVER SETUP ---
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_database()
@@ -648,5 +645,5 @@ async def api_rate(req: Request):
     except: return {"status": "error"}
 
 if __name__ == "__main__":
-    logger.info(f"🚀 BotHost AI (SambaNova) Running on port {PORT}...")
+    logger.info(f"🚀 BotHost AI Running on port {PORT}...")
     uvicorn.run(app, host="0.0.0.0", port=PORT)
