@@ -32,7 +32,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "7869311061:AAGPstYpuGk7CZTHBQ-_1IL7FCXDyUfIX
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8473513085"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://supportbothost.bothost.ru")
 PORT = int(os.getenv("PORT", "3000"))
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 
 DB_PATH = "knowledge_base.db"
 
